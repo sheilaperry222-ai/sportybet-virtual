@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: sportybet-virtual-api
+    env: python
+    region: frankfurt # Closest to Lagos
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn src.api.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SUPABASE_URL
+        value: https://hjxbftocxaalmqewmlxe.supabase.co
+      - key: SUPABASE_KEY
+        value: sb_publishable_RfPO3hS4jVyc164y8zPZAw_MB5ThsyY
+      - key: SUPABASE_SERVICE_KEY
+        sync: false # Set manually in Render dashboard for security
+      - key: PYTHON_VERSION
+        value: 3.11
+    healthCheckPath: /
+    autoDeploy: false
+
+# Optional: Add a cron job to retrain model daily
+  - type: cron
+    name: sportybet-retrain-daily
+    env: python
+    region: frankfurt
+    schedule: "0 2 * * *" # 2 AM daily
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -c "from src.datacenter.supabase_client import SupabaseDB; from src.predictor.correct_score_predictor import CorrectScorePredictor; from src.predictor.over_under_predictor import OverUnderPredictor; import pandas as pd; db=SupabaseDB(); data=db.get_all_matches(5000); print(f'Training on {len(data)} matches...') if data else print('No data')"

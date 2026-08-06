@@ -1,0 +1,53 @@
+# Virtual Sports Data Center Config - SportyBet
+project:
+  name: "SportyBet Virtual Football Predictor"
+  version: "1.0.0"
+  target_site: "SportyBet NG"
+  target_category: "Virtual Football League"
+
+collector:
+  mode: "auto" # auto, manual, api_sniff
+  interval_seconds: 180  # Virtual football round every 3 minutes on SportyBet
+  headless: true
+  sportybet_url: "https://www.sportybet.com/ng/m/virtualFootball?productId=virtualFootball"
+  # To find API: Open Chrome DevTools > Network > Filter XHR while virtual is playing
+  # Look for requests like /api/virtual/* or inspired / kiron provider
+  api_endpoint_hint: "https://www.sportybet.com/api/virtual/v1/results"
+  storage: "sqlite"
+  db_path: "data/virtual_sports.db"
+  screenshot_on_error: true
+
+datacenter:
+  db_path: "data/virtual_sports.db"
+  backup_enabled: true
+  backup_dir: "data/backups"
+  retention_days: 90
+
+predictor:
+  model_type: "ensemble" # ensemble, random_forest, poisson, xgboost
+  correct_score_max_goals: 5  # Predict scores up to 5-5, beyond grouped
+  train_test_split: 0.2
+  features:
+    - team_avg_goals_scored
+    - team_avg_goals_conceded
+    - team_form_last_5
+    - h2h_avg_goals
+    - league_avg_goals
+    - home_advantage
+    - elo_rating
+    - goal_poisson_lambda
+  model_path: "models/correct_score_model.pkl"
+  elo_path: "models/elo_ratings.json"
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  allow_cors: true
+
+dashboard:
+  refresh_interval_seconds: 30
+  show_top_n_predictions: 5
+
+logging:
+  level: "INFO"
+  file: "data/collector.log"

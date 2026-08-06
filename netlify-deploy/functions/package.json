@@ -1,0 +1,9 @@
+{
+  "name": "sportybet-virtual-functions",
+  "version": "2.0.0",
+  "description": "Netlify Functions for SportyBet Virtual Data Center with Supabase",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.109.0",
+    "ws": "^8.21.2"
+  }
+}

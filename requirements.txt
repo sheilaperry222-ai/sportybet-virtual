@@ -1,0 +1,26 @@
+fastapi==0.110.0
+uvicorn[standard]==0.29.0
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.4.2
+sqlalchemy==2.0.30
+requests==2.31.0
+selenium==4.21.0
+webdriver-manager==4.0.1
+python-dotenv==1.0.1
+pyyaml==6.0.1
+joblib==1.4.2
+matplotlib==3.8.4
+xgboost==2.0.3
+python-multipart==0.0.9
+jinja2==3.1.4
+# Supabase + Bot Bypass
+supabase==2.7.0
+undetected-chromedriver==3.5.5
+selenium-stealth==1.0.6
+fake-useragent==1.5.1
+camoufox==0.4.5
+nodriver==0.33
+playwright==1.42.0
+playwright-stealth==1.0.6
+httpx==0.27.0

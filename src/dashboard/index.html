@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SportyBet Virtual Data Center v2</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui;background:#0a0e1a;color:#e2e8f0;min-height:100vh}
+header{background:linear-gradient(135deg,#0f172a,#1e3a8a);padding:18px 24px;border-bottom:1px solid #1e40af;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+header h1{font-size:22px}
+.badge{background:#facc15;color:#000;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:800;margin-left:8px}
+.badge2{background:#22c55e;color:#000;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:800}
+nav{display:flex;gap:10px;flex-wrap:wrap}
+button{cursor:pointer;border:0;border-radius:8px;padding:10px 14px;font-weight:600;transition:.2s;font-size:13px}
+.btn-primary{background:#2563eb;color:white}
+.btn-primary:hover{background:#1d4ed8}
+.btn-success{background:#16a34a;color:white}
+.btn-success:hover{background:#15803d}
+.btn-ghost{background:#1e293b;color:#94a3b8}
+.btn-ghost:hover{background:#334155}
+.container{max-width:1400px;margin:0 auto;padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.card{background:#111827;border:1px solid #1f2937;border-radius:16px;padding:18px;box-shadow:0 10px 30px rgba(0,0,0,.3)}
+.card h2{font-size:14px;margin-bottom:12px;color:#93c5fd;letter-spacing:.5px;text-transform:uppercase}
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.stat{background:#0f172a;border-radius:12px;padding:12px;text-align:center;border:1px solid #1e293b}
+.stat b{display:block;font-size:18px;color:#facc15}
+.stat small{color:#64748b;font-size:10px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{color:#64748b;text-align:left;padding:6px;border-bottom:1px solid #1f2937;font-size:10px;text-transform:uppercase}
+td{padding:6px;border-bottom:1px solid #0f172a}
+.score{font-weight:800;background:#1e293b;padding:2px 7px;border-radius:6px}
+.form{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.form input,.form select, .form textarea{flex:1;background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:9px;color:#e2e8f0;font-size:13px}
+.prediction{border:1px solid #1e40af;background:linear-gradient(135deg,#0f172a,#1e293b);border-radius:12px;padding:10px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.score-big{font-size:18px;font-weight:900;color:#facc15}
+.prob-bar{height:5px;background:#1e293b;border-radius:10px;overflow:hidden;margin-top:5px}
+.prob-fill{height:100%;background:linear-gradient(90deg,#2563eb,#facc15)}
+.badge-prob{background:#2563eb;color:white;padding:2px 7px;border-radius:20px;font-size:11px;font-weight:700}
+.ou-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ou-card{background:#0f172a;border-radius:12px;padding:12px;border:1px solid #1e293b;text-align:center}
+.ou-card h3{font-size:11px;color:#64748b;margin-bottom:4px;text-transform:uppercase}
+.ou-card .val{font-size:20px;font-weight:900}
+.ou-card.over .val{color:#22c55e}
+.ou-card.under .val{color:#f97316}
+.reco{margin-top:8px;padding:6px 10px;border-radius:20px;font-size:11px;font-weight:800;display:inline-block}
+.reco.STRONG{background:#22c55e;color:#000}
+.reco.MODERATE{background:#facc15;color:#000}
+.reco.WEAK{background:#334155;color:#94a3b8}
+.reco.NO{Background:#1e293b;color:#475569}
+.full{grid-column:1 / -1}
+.log{background:#020617;border-radius:10px;padding:10px;font-family:monospace;font-size:11px;max-height:180px;overflow:auto;color:#94a3b8;white-space:pre-wrap}
+@media(max-width:1000px){.container{grid-template-columns:1fr}.stat-grid{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<header>
+<div><h1>⚽ SportyBet Data Center <span class="badge">V2 LIVE</span> <span class="badge2">CS + OVER 2.5 + UNDER 1.5</span></h1><small style="color:#93c5fd">Virtual Football League • Local PC</small></div>
+<nav>
+<button class="btn-ghost" onclick="loadStats()">🔄 Refresh</button>
+<button class="btn-success" onclick="trainAll()">🧠 Train ALL Models</button>
+<button class="btn-primary" onclick="train()">CS Only</button>
+</nav>
+</header>
+
+<div class="container">
+  <div class="card">
+    <h2>📊 Data Center Stats</h2>
+    <div class="stat-grid">
+      <div class="stat"><b id="totalMatches">0</b><small>Matches</small></div>
+      <div class="stat"><b id="overRate">0%</b><small>Over 2.5</small></div>
+      <div class="stat"><b id="underRate">0%</b><small>Under 1.5</small></div>
+      <div class="stat"><b id="avgGoals">0</b><small>Avg Goals</small></div>
+    </div>
+    <div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="stat"><b id="uniqueTeams">0</b><small>Teams</small></div>
+      <div class="stat"><b id="trained">NO</b><small>CS Model</small></div>
+      <div class="stat"><b id="trainedOU">NO</b><small>OU Model</small></div>
+    </div>
+    <h2>🔥 Most Frequent Scores</h2>
+    <table id="scoreTable"><tr><th>Score</th><th>Count</th><th>Freq</th></tr></table>
+  </div>
+
+  <div class="card">
+    <h2>🎯 Predict All Markets (CS + Over 2.5 + Under 1.5)</h2>
+    <div class="form">
+      <select id="homeTeam"></select>
+      <select id="awayTeam"></select>
+    </div>
+    <div class="form">
+      <button class="btn-primary" style="flex:1" onclick="predictAll()">Predict ALL</button>
+      <button class="btn-ghost" onclick="predict()">CS Only</button>
+      <button class="btn-ghost" onclick="predictOU()">OU Only</button>
+    </div>
+    
+    <div id="ouResult" style="margin-bottom:12px"></div>
+    <div id="predictResult"></div>
+
+    <div style="margin-top:14px;border-top:1px solid #1f2937;padding-top:12px">
+      <h2>⚙️ Quick Collect</h2>
+      <div class="form">
+        <input id="mHome" placeholder="Home">
+        <input id="mAway" placeholder="Away">
+        <input id="mHs" placeholder="HS" style="max-width:50px">
+        <input id="mAs" placeholder="AS" style="max-width:50px">
+        <button class="btn-ghost" onclick="manualAdd()">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>🏆 Team Strength</h2>
+    <table id="teamTable"><tr><th>Team</th><th>MP</th><th>Sc</th><th>Con</th><th>Elo</th></tr></table>
+  </div>
+
+  <div class="card">
+    <h2>🕒 Recent Feed</h2>
+    <table id="recentTable"><tr><th>Time</th><th>Match</th><th>Score</th><th>OU</th></tr></table>
+  </div>
+
+  <div class="card full">
+    <h2>📅 Matchday Predictor - 10 fixtures + Over/Under</h2>
+    <div class="form">
+      <textarea id="matchdayInput" style="width:100%;min-height:80px" placeholder="Man City vs Arsenal
+Liverpool vs Chelsea
+... one per line"></textarea>
+    </div>
+    <div class="form">
+      <button class="btn-primary" onclick="predictMatchday()">Predict Entire Matchday (CS + OU)</button>
+    </div>
+    <div id="matchdayResult" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:12px"></div>
+  </div>
+
+  <div class="card full">
+    <h2>🧾 Log</h2>
+    <div class="log" id="log">V2 Loaded. Models: Correct Score + Over 2.5 + Under 1.5
+API: /predict_all returns all markets in one call
+</div>
+  </div>
+</div>
+
+<script>
+const API = location.origin;
+const TEAMS = ["Man Utd","Man City","Liverpool","Chelsea","Arsenal","Tottenham","Everton","Leicester","West Ham","Aston Villa","Newcastle","Leeds","Wolves","Crystal Palace","Southampton","Brighton","Burnley","Fulham","West Brom","Sheff Utd"];
+
+function log(msg){ const el=document.getElementById('log'); el.textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + el.textContent; }
+
+function populateTeams(){
+  const h=document.getElementById('homeTeam'), a=document.getElementById('awayTeam');
+  h.innerHTML=''; a.innerHTML='';
+  TEAMS.forEach(t=>{
+    let o1=document.createElement('option'); o1.value=t; o1.textContent=t; h.appendChild(o1);
+    let o2=document.createElement('option'); o2.value=t; o2.textContent=t; a.appendChild(o2);
+  });
+  h.selectedIndex=1; a.selectedIndex=4;
+}
+populateTeams();
+
+async function loadStats(){
+  try{
+    const res = await fetch(`${API}/stats`);
+    const data = await res.json();
+    document.getElementById('totalMatches').textContent = data.total_matches;
+    document.getElementById('uniqueTeams').textContent = data.unique_teams;
+    document.getElementById('trained').textContent = data.model_trained ? 'YES' : 'NO';
+    document.getElementById('trainedOU').textContent = data.ou_model_trained ? 'YES' : 'NO';
+    document.getElementById('overRate').textContent = (data.over_25_rate*100).toFixed(1)+'%';
+    document.getElementById('underRate').textContent = (data.under_15_rate*100).toFixed(1)+'%';
+    document.getElementById('avgGoals').textContent = (data.avg_goals||0).toFixed(2);
+    log(`Stats: ${data.total_matches} matches, Avg ${data.avg_goals.toFixed(2)} goals`);
+
+    const st = document.getElementById('scoreTable');
+    st.innerHTML='<tr><th>Score</th><th>Count</th><th>Freq</th></tr>';
+    (data.most_common_scores||[]).slice(0,8).forEach(r=>{
+      st.innerHTML+=`<tr><td><span class="score">${r.correct_score}</span></td><td>${r.count}</td><td>${(r.frequency*100).toFixed(1)}%</td></tr>`;
+    });
+
+    const tt = document.getElementById('teamTable');
+    tt.innerHTML='<tr><th>Team</th><th>MP</th><th>Sc</th><th>Con</th><th>Elo</th></tr>';
+    (data.team_stats||[]).slice(0,15).forEach(t=>{
+      tt.innerHTML+=`<tr><td>${t.team_name}</td><td>${t.matches_played}</td><td>${(t.avg_scored||0).toFixed(2)}</td><td>${(t.avg_conceded||0).toFixed(2)}</td><td>${Math.round(t.elo_rating||1500)}</td></tr>`;
+    });
+
+    const rt = document.getElementById('recentTable');
+    rt.innerHTML='<tr><th>Time</th><th>Match</th><th>Score</th><th>OU</th></tr>';
+    (data.recent_matches||[]).slice(0,15).forEach(m=>{
+      const time = (m.timestamp||'').slice(11,16);
+      let ouTag = m.total_goals>2 ? '<span style="color:#22c55e">O2.5</span>' : m.total_goals<=1 ? '<span style="color:#f97316">U1.5</span>' : '<span style="color:#64748b">U2.5</span>';
+      rt.innerHTML+=`<tr><td>${time}</td><td>${m.home_team.slice(0,6)} vs ${m.away_team.slice(0,6)}</td><td><span class="score">${m.correct_score}</span></td><td>${ouTag}</td></tr>`;
+    });
+  }catch(e){ log('Error loading stats: '+e); }
+}
+
+async function train(){ log('Training CS model...'); const res = await fetch(`${API}/train`, {method:'POST'}); const data = await res.json(); log(data.success?`CS trained ${data.matches_used}`: `Failed ${JSON.stringify(data)}`); loadStats(); }
+async function trainAll(){ log('Training ALL models (CS + OU)...'); const res = await fetch(`${API}/train_all`, {method:'POST'}); const data = await res.json(); log(data.success?`ALL trained! ${data.matches_used} matches - CS:${data.correct_score_trained} OU:${data.over_under_trained}`:`Failed ${JSON.stringify(data)}`); loadStats(); }
+
+function renderOU(data){
+  const ou = data.ensemble || data;
+  const rec = data.recommendation || {};
+  let html = `<div class="ou-grid">
+    <div class="ou-card over"><h3>Over 2.5</h3><div class="val">${(ou.over_2_5*100).toFixed(1)}%</div><div class="reco ${rec.over_2_5||'NO'}">${rec.over_2_5||''}</div></div>
+    <div class="ou-card under"><h3>Under 1.5</h3><div class="val">${(ou.under_1_5*100).toFixed(1)}%</div><div class="reco ${rec.under_1_5||'NO'}">${rec.under_1_5||''}</div></div>
+  </div>
+  <div class="ou-grid" style="margin-top:8px">
+    <div class="ou-card"><h3>Over 1.5</h3><div class="val" style="color:#e2e8f0">${(ou.over_1_5*100).toFixed(1)}%</div></div>
+    <div class="ou-card"><h3>Under 2.5</h3><div class="val" style="color:#e2e8f0">${(ou.under_2_5*100).toFixed(1)}%</div></div>
+  </div>
+  <div style="margin-top:8px;font-size:11px;color:#64748b">Pred Total: ${(ou.predicted_total||0).toFixed(2)} goals | λ Total ${(data.lambda_total||0).toFixed(2)} | Best: <b style="color:#facc15">${rec.best_bet||'N/A'}</b></div>`;
+  return html;
+}
+
+async function predictAll(){
+  const home=document.getElementById('homeTeam').value, away=document.getElementById('awayTeam').value;
+  if(home===away){ alert('Different teams'); return; }
+  log(`Predicting ALL markets for ${home} vs ${away}...`);
+  const res = await fetch(`${API}/predict_all`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({home_team:home, away_team:away, top_n:5})});
+  const data = await res.json();
+  
+  // OU part
+  document.getElementById('ouResult').innerHTML = renderOU(data.over_under);
+  
+  // CS part
+  const cs = data.correct_score;
+  const box=document.getElementById('predictResult');
+  let html=`<div style="margin:8px 0;color:#94a3b8;font-size:11px">λ ${cs.lambda_home.toFixed(2)}-${cs.lambda_away.toFixed(2)} | xG ${cs.expected_total_goals.toFixed(2)} | Elo diff ${Math.round(cs.elo_diff||0)}</div>`;
+  (cs.predictions||[]).forEach((p,i)=>{
+    html+=`<div class="prediction"><div><div class="score-big">${p.score}</div><small style="color:#64748b">Rank #${i+1}</small></div><div style="text-align:right"><div class="badge-prob">${(p.prob*100).toFixed(1)}%</div><div class="prob-bar" style="width:70px"><div class="prob-fill" style="width:${p.prob*100}%"></div></div></div></div>`;
+  });
+  box.innerHTML=html;
+  log(`ALL done: CS ${cs.predictions[0]?.score} ${ (cs.predictions[0]?.prob*100).toFixed(1)}% | O2.5 ${(data.over_under.ensemble.over_2_5*100).toFixed(1)}% | U1.5 ${(data.over_under.ensemble.under_1_5*100).toFixed(1)}%`);
+}
+
+async function predict(){
+  const home=document.getElementById('homeTeam').value, away=document.getElementById('awayTeam').value;
+  const res = await fetch(`${API}/predict`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({home_team:home, away_team:away, top_n:5})});
+  const data = await res.json();
+  const box=document.getElementById('predictResult');
+  let html=`<div style="margin-bottom:8px;color:#94a3b8;font-size:11px">λ ${data.lambda_home.toFixed(2)}-${data.lambda_away.toFixed(2)} | xG ${data.expected_total_goals.toFixed(2)}</div>`;
+  (data.predictions||[]).forEach((p,i)=>{ html+=`<div class="prediction"><div><div class="score-big">${p.score}</div></div><div class="badge-prob">${(p.prob*100).toFixed(1)}%</div></div>`; });
+  box.innerHTML=html; document.getElementById('ouResult').innerHTML='';
+}
+
+async function predictOU(){
+  const home=document.getElementById('homeTeam').value, away=document.getElementById('awayTeam').value;
+  log(`Predicting OU for ${home} vs ${away}...`);
+  const res = await fetch(`${API}/predict_over_under`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({home_team:home, away_team:away})});
+  const data = await res.json();
+  document.getElementById('ouResult').innerHTML = renderOU(data);
+  document.getElementById('predictResult').innerHTML='';
+  log(`OU: O2.5 ${(data.ensemble.over_2_5*100).toFixed(1)}% | U1.5 ${(data.ensemble.under_1_5*100).toFixed(1)}%`);
+}
+
+async function manualAdd(){
+  const home=document.getElementById('mHome').value||document.getElementById('homeTeam').value;
+  const away=document.getElementById('mAway').value||document.getElementById('awayTeam').value;
+  const hs=parseInt(document.getElementById('mHs').value), as=parseInt(document.getElementById('mAs').value);
+  if(isNaN(hs)||isNaN(as)){ alert('Enter scores'); return; }
+  const res=await fetch(`${API}/collect`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({home_team:home, away_team:away, home_score:hs, away_score:as})});
+  const data=await res.json(); log(`Added ${home} ${hs}-${as} ${away}: ${data.success}`); loadStats();
+}
+
+async function predictMatchday(){
+  const txt=document.getElementById('matchdayInput').value.trim();
+  if(!txt){ alert('Enter fixtures'); return; }
+  const lines=txt.split('\n').map(l=>l.trim()).filter(Boolean);
+  const fixtures=lines.map(line=>{ let parts=line.split(/vs|VS|-/); if(parts.length>=2) return [parts[0].trim(), parts[1].trim()]; return null; }).filter(Boolean);
+  log(`Predicting matchday ${fixtures.length} games (ALL markets)...`);
+  const res=await fetch(`${API}/predict_matchday`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({fixtures, top_n:3})});
+  const data=await res.json();
+  const box=document.getElementById('matchdayResult'); box.innerHTML='';
+  (data.fixtures||[]).forEach(f=>{
+    let ou = f.over_under||{}; let rec = f.ou_recommendation||{};
+    let html=`<div class="card" style="padding:12px"><div style="font-weight:700;margin-bottom:6px;font-size:13px">${f.home_team} vs ${f.away_team}<br><small style="color:#64748b">λ ${f.lambda_home.toFixed(2)}-${f.lambda_away.toFixed(2)} | Total ${ou.predicted_total?.toFixed(2)||''}</small></div>`;
+    html+=`<div style="display:flex;gap:6px;margin:6px 0"><span style="background:#052e16;color:#22c55e;padding:3px 8px;border-radius:12px;font-size:11px;font-weight:700">O2.5 ${(ou.over_2_5*100||0).toFixed(1)}%</span><span style="background:#431407;color:#f97316;padding:3px 8px;border-radius:12px;font-size:11px;font-weight:700">U1.5 ${(ou.under_1_5*100||0).toFixed(1)}%</span></div>`;
+    (f.predictions||[]).forEach(p=>{ html+=`<div style="display:flex;justify-content:space-between;margin:3px 0;font-size:12px"><span class="score">${p.score}</span><span style="color:#facc15">${(p.prob*100).toFixed(1)}%</span></div>`; });
+    html+=`<div style="margin-top:6px;font-size:10px;color:#facc15">Best: ${rec.best_bet||''}</div></div>`;
+    box.innerHTML+=html;
+  });
+}
+
+loadStats();
+setInterval(loadStats, 30000);
+</script>
+</body>
+</html>

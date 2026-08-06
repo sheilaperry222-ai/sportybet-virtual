@@ -1,0 +1,15 @@
+{
+  "name": "virtual-sports-predictor",
+  "version": "1.0.0",
+  "description": "You asked for a **data center where your bot gets previous virtual sport results of a particular category and learns from them to predict the current match**. This is exactly what this project does - tuned for **SportyBet Virtual Football League**.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "netlify-cli": "^17.38.1"
+  }
+}

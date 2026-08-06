@@ -1,0 +1,44 @@
+[build]
+  # Publish the dashboard as static site - use netlify-deploy/public which has latest v2
+  publish = "netlify-deploy/public"
+  # Build command - ensures functions deps installed
+  command = "cp src/dashboard/index.html netlify-deploy/public/index.html && echo 'Building for Netlify with Supabase + Stealth bypass...' && ls -lh netlify-deploy/public/ && ls -lh netlify-deploy/functions/"
+  
+[build.environment]
+  NODE_VERSION = "18"
+
+# Functions directory for serverless predictions
+[functions]
+  directory = "netlify-deploy/functions"
+  node_bundler = "esbuild"
+
+# Redirect API calls to functions
+[[redirects]]
+  from = "/api/predict_all"
+  to = "/.netlify/functions/predict_all"
+  status = 200
+
+[[redirects]]
+  from = "/api/predict"
+  to = "/.netlify/functions/predict_all"
+  status = 200
+
+[[redirects]]
+  from = "/api/stats"
+  to = "/.netlify/functions/stats"
+  status = 200
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+# SPA fallback
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[dev]
+  command = "python run.py"
+  port = 8888
