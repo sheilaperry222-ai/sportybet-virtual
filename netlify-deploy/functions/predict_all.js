@@ -24,6 +24,12 @@ function underProb(lambdaTotal, line) {
   for (let k = 0; k <= threshold; k++) cdf += poissonProb(lambdaTotal, k);
   return cdf;
 }
+function ggProb(lambdaHome, lambdaAway) {
+  // GG = Both teams score >0: P(home>0)*P(away>0) = (1 - e^-lh)*(1 - e^-la)
+  const pHome0 = Math.exp(-lambdaHome);
+  const pAway0 = Math.exp(-lambdaAway);
+  return (1 - pHome0) * (1 - pAway0);
+}
 
 // Fetch team stats from Supabase if available, else fallback
 async function getTeamStatsFromSupabase(homeTeam, awayTeam) {
@@ -98,7 +104,69 @@ exports.handler = async function(event, context) {
     if (event.body) {
       try { body = JSON.parse(event.body); } catch(e) { body = {}; }
     }
-    // Support both query and body
+
+    // NEW: Support matchday predictions - fixtures array - ONLY Over 2.5, GG, Under 1.5
+    if (body.fixtures && Array.isArray(body.fixtures) && body.fixtures.length > 0) {
+      const fixtures = body.fixtures.slice(0,15); // Max 15
+      const results = [];
+      for (const f of fixtures) {
+        let homeTeam, awayTeam;
+        if (Array.isArray(f)) { homeTeam = f[0]; awayTeam = f[1]; }
+        else { homeTeam = f.home_team || f.home; awayTeam = f.away_team || f.away; }
+        if (!homeTeam || !awayTeam) continue;
+
+        let homeStat = getTeamStat(homeTeam);
+        let awayStat = getTeamStat(awayTeam);
+        try {
+          const supaMap = await getTeamStatsFromSupabase(homeTeam, awayTeam);
+          if (supaMap) {
+            homeStat = supaMap[homeTeam] || homeStat;
+            awayStat = supaMap[awayTeam] || awayStat;
+          }
+        } catch {}
+
+        const lambdaHome = ((homeStat.avg_scored + awayStat.avg_conceded) / 2) * 1.1;
+        const lambdaAway = (awayStat.avg_scored + homeStat.avg_conceded) / 2;
+        const lambdaTotal = lambdaHome + lambdaAway;
+
+        const over15 = overProb(lambdaTotal, 1.5);
+        const over25 = overProb(lambdaTotal, 2.5);
+        const under15 = underProb(lambdaTotal, 1.5);
+        const gg = ggProb(lambdaHome, lambdaAway);
+        function reco(p){ if(p>=0.65) return "STRONG"; if(p>=0.58) return "MODERATE"; if(p>=0.52) return "WEAK"; return "NO BET"; }
+        const bestBet = over25>=0.6 ? "OVER 2.5" : gg>=0.6 ? "GG YES" : under15>=0.6 ? "UNDER 1.5" : over15>=0.6 ? "OVER 1.5" : "NO CLEAR";
+
+        results.push({
+          home_team: homeTeam,
+          away_team: awayTeam,
+          lambda_home: lambdaHome,
+          lambda_away: lambdaAway,
+          over_1_5: over15,
+          over_2_5: over25,
+          under_1_5: under15,
+          gg: gg,
+          gg_yes: gg,
+          predicted_total: lambdaTotal,
+          best_bet: bestBet,
+          over_15: over15,
+          over_25: over25,
+          recommendation: { over_1_5: reco(over15), over_2_5: reco(over25), under_1_5: reco(under15), gg: reco(gg), best_bet: bestBet },
+          over_under: { over_1_5: over15, over_2_5: over25, under_1_5: under15, gg: gg, predicted_total: lambdaTotal },
+          ou_recommendation: { over_1_5: reco(over15), over_2_5: reco(over25), under_1_5: reco(under15), gg: reco(gg), best_bet: bestBet }
+        });
+      }
+      return {
+        statusCode: 200, headers,
+        body: JSON.stringify({
+          fixtures: results,
+          count: results.length,
+          display_only: "Over 2.5, GG, Under 1.5 - Instant Virtual Prediction Site",
+          source: "netlify-function-matchday-v4"
+        })
+      };
+    }
+
+    // Support both query and body for single match
     const homeTeam = body.home_team || event.queryStringParameters?.home || "Man City";
     const awayTeam = body.away_team || event.queryStringParameters?.away || "Arsenal";
     const topN = body.top_n || 5;
@@ -122,6 +190,8 @@ exports.handler = async function(event, context) {
     const totalProb = correctScores.reduce((s,c)=>s+c.prob,0) || 1;
     const normScores = correctScores.map(s=> ({ ...s, prob: s.prob / totalProb })).slice(0, topN);
 
+    const ggProbVal = ggProb(lambdaHome, lambdaAway);
+
     const overUnder = {
       lambda_home: lambdaHome,
       lambda_away: lambdaAway,
@@ -136,6 +206,9 @@ exports.handler = async function(event, context) {
         under_2_5: underProb(lambdaTotal, 2.5),
         over_3_5: overProb(lambdaTotal, 3.5),
         under_3_5: underProb(lambdaTotal, 3.5),
+        gg_yes: ggProbVal,
+        gg_no: 1 - ggProbVal,
+        gg: ggProbVal,
         predicted_total: lambdaTotal,
         // compat keys
         "over_2.5": overProb(lambdaTotal, 2.5),
@@ -152,11 +225,15 @@ exports.handler = async function(event, context) {
         under_2_5: underProb(lambdaTotal, 2.5),
         over_3_5: overProb(lambdaTotal, 3.5),
         under_3_5: underProb(lambdaTotal, 3.5),
+        gg_yes: ggProbVal,
+        gg_no: 1 - ggProbVal,
       }
     };
 
     const over25 = overUnder.ensemble["over_2.5"];
+    const over15 = overUnder.ensemble["over_1.5"];
     const under15 = overUnder.ensemble["under_1.5"];
+    const ggYes = ggProbVal;
     
     function reco(prob) {
       if (prob >= 0.65) return "STRONG";
@@ -167,8 +244,11 @@ exports.handler = async function(event, context) {
 
     const recommendation = {
       over_2_5: reco(over25),
+      over_1_5: reco(over15),
       under_1_5: reco(under15),
-      best_bet: over25 >= 0.6 ? "OVER 2.5" : under15 >= 0.6 ? "UNDER 1.5" : over25 >= 0.55 ? "OVER 2.5" : under15 >= 0.55 ? "UNDER 1.5" : "NO CLEAR EDGE"
+      gg: reco(ggYes),
+      gg_yes: reco(ggYes),
+      best_bet: over25 >= 0.6 ? "OVER 2.5" : ggYes >= 0.6 ? "GG YES" : under15 >= 0.6 ? "UNDER 1.5" : over15 >= 0.6 ? "OVER 1.5" : "NO CLEAR EDGE"
     };
 
     const response = {
@@ -192,17 +272,32 @@ exports.handler = async function(event, context) {
           ...overUnder.ensemble,
           predicted_total: lambdaTotal,
           over_2_5: over25,
+          over_1_5: over15,
           under_1_5: under15,
+          gg_yes: ggYes,
+          gg: ggYes,
         }
       },
+      // New v4 ONLY Over 2.5, GG, Under 1.5
+      over_2_5: over25,
+      gg: ggYes,
+      gg_yes: ggYes,
+      under_1_5: under15,
+      over_1_5: over15,
+      predicted_total: lambdaTotal,
+      best_bet: recommendation.best_bet,
       summary: {
         top_correct_score: normScores[0],
         over_2_5_prob: over25,
+        over_1_5_prob: over15,
         under_1_5_prob: under15,
+        gg_prob: ggYes,
+        gg_yes_prob: ggYes,
         predicted_total_goals: lambdaTotal,
-        recommendation
+        recommendation,
+        only: ["Over 2.5", "GG", "Under 1.5"]
       },
-      source: "netlify-function-poisson",
+      source: "netlify-function-poisson-v4-Over2.5-GG-Under1.5",
       hosted_on: "netlify"
     };
 

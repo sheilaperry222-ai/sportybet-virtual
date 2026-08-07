@@ -11,5 +11,9 @@
   "license": "ISC",
   "devDependencies": {
     "netlify-cli": "^17.38.1"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.109.0",
+    "ws": "^8.21.2"
   }
 }

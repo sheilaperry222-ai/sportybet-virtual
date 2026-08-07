@@ -1,44 +1,79 @@
 [build]
-  # Publish the dashboard as static site - use netlify-deploy/public which has latest v2
   publish = "netlify-deploy/public"
-  # Build command - ensures functions deps installed
-  command = "cp src/dashboard/index.html netlify-deploy/public/index.html && echo 'Building for Netlify with Supabase + Stealth bypass...' && ls -lh netlify-deploy/public/ && ls -lh netlify-deploy/functions/"
+  command = "cp src/dashboard/index.html netlify-deploy/public/index.html"
   
 [build.environment]
   NODE_VERSION = "18"
 
-# Functions directory for serverless predictions
 [functions]
   directory = "netlify-deploy/functions"
   node_bundler = "esbuild"
 
-# Redirect API calls to functions
 [[redirects]]
   from = "/api/predict_all"
   to = "/.netlify/functions/predict_all"
   status = 200
-
+[[redirects]]
+  from = "/api/predict_current"
+  to = "/.netlify/functions/predict_all"
+  status = 200
+[[redirects]]
+  from = "/api/predict_matchday"
+  to = "/.netlify/functions/predict_all"
+  status = 200
 [[redirects]]
   from = "/api/predict"
   to = "/.netlify/functions/predict_all"
   status = 200
-
+[[redirects]]
+  from = "/predict_current"
+  to = "/.netlify/functions/predict_all"
+  status = 200
 [[redirects]]
   from = "/api/stats"
   to = "/.netlify/functions/stats"
   status = 200
-
+[[redirects]]
+  from = "/api/current_matches"
+  to = "/.netlify/functions/current_matches"
+  status = 200
+[[redirects]]
+  from = "/api/current_fixtures"
+  to = "/.netlify/functions/current_fixtures"
+  status = 200
+[[redirects]]
+  from = "/api/collect"
+  to = "/.netlify/functions/collect"
+  status = 200
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"
   status = 200
-
-# SPA fallback
+[[redirects]]
+  from = "/stats"
+  to = "/.netlify/functions/stats"
+  status = 200
+[[redirects]]
+  from = "/current_matches"
+  to = "/.netlify/functions/current_matches"
+  status = 200
+[[redirects]]
+  from = "/current_fixtures"
+  to = "/.netlify/functions/current_fixtures"
+  status = 200
+[[redirects]]
+  from = "/collect"
+  to = "/.netlify/functions/collect"
+  status = 200
+[[redirects]]
+  from = "/predict_matchday"
+  to = "/.netlify/functions/predict_all"
+  status = 200
+[[redirects]]
+  from = "/predict_all"
+  to = "/.netlify/functions/predict_all"
+  status = 200
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
-
-[dev]
-  command = "python run.py"
-  port = 8888
