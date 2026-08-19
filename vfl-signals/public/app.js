@@ -81,10 +81,10 @@ function renderSource() {
   const c = cache[active];
   const info = c.sourceInfo || {};
   if (info.source === 'live') {
-    el.textContent = `LIVE SPORTYBET · ${info.fixtures ?? '?'} games · ${info.ageSec != null ? info.ageSec + 's ago' : ''}`.trim();
+    el.textContent = `LIVE SPORTYBET · ${info.fixtures ?? '?'} matches · ${info.ageSec != null ? info.ageSec + 's ago' : ''}`.trim();
     el.className = 'src-live';
   } else {
-    el.textContent = 'SIMULATED (no live feed)';
+    el.textContent = 'OFFLINE — waiting for SportyBet';
     el.className = 'src-sim';
   }
 }
@@ -194,21 +194,32 @@ function filtered() {
 function renderPrediction() {
   const c = cache[active];
   const pred = c.prediction;
-  const title = `${SITES[active].label.toUpperCase()} WINNER PREDICTIONS`;
+  const title = `SPORTYBET WINNER PREDICTIONS`;
   document.getElementById('heroTitle').textContent = title;
-  document.getElementById('seasonVal').textContent = pred ? pred.week : '—';
-  document.getElementById('weekVal').textContent = pred ? pred.week : '—';
-  document.getElementById('pidVal').textContent = pred ? pred.PID : '—';
+  document.getElementById('seasonVal').textContent = 'VIRTUAL ENGLAND';
+  document.getElementById('weekVal').textContent = pred && pred.round ? `#${pred.round}` : '—';
+  document.getElementById('pidVal').textContent = pred && pred.PID ? pred.PID : '—';
 
   const row = document.getElementById('picksRow');
   const inPlay = c.phase === 'thinking' || !pred || !pred.predictions || !pred.predictions.length;
+  const offline = c.sourceInfo && c.sourceInfo.source === 'offline' || c.phase === 'offline';
+
+  if (offline) {
+    row.innerHTML = `
+      <div class="thinking-panel">
+        <div class="spinner" style="border-top-color:#f85149"></div>
+        <div class="thinking-txt">OFFLINE</div>
+        <div class="thinking-sub">Waiting for SportyBet data — this site shows real matches only, never simulated picks.</div>
+      </div>`;
+    return;
+  }
 
   if (inPlay) {
     row.innerHTML = `
       <div class="thinking-panel">
         <div class="spinner"></div>
         <div class="thinking-txt">Thinking</div>
-        <div class="thinking-sub">bets closed — matches in play, next prediction soon…</div>
+        <div class="thinking-sub">bets closed — matches in play, next real round soon…</div>
       </div>`;
     return;
   }
@@ -242,8 +253,9 @@ function renderPhase() {
   const c = cache[active];
   const badge = document.getElementById('phaseBadge');
   const inPlay = c.phase === 'thinking';
-  badge.textContent = inPlay ? 'Thinking' : 'PREDICTING';
-  badge.className = `badge ${inPlay ? 'thinking' : 'predicting'}`;
+  const offline = c.phase === 'offline';
+  badge.textContent = offline ? 'OFFLINE' : (inPlay ? 'Thinking' : 'PREDICTING');
+  badge.className = `badge ${offline ? 'thinking' : inPlay ? 'thinking' : 'predicting'}`;
   renderPrediction();
 }
 
@@ -255,7 +267,7 @@ function renderNextStake() {
 
 function renderAnalytics() {
   const a = processAnalytic(filtered());
-  document.getElementById('analyticAcc').textContent = `${a.acc}%`;
+  document.getElementById('analyticAcc').textContent = a.count ? `${a.acc}%` : '—%';
   document.getElementById('analyticLogs').textContent = `${a.winnings} / ${a.count}`;
   document.getElementById('analyticWon').textContent = `₦${numberWithCommas(a.sum)}`;
   document.getElementById('analyticBet').textContent = `₦${numberWithCommas(a.bets)}`;
@@ -273,7 +285,7 @@ function renderPrev() {
   }
   document.getElementById('chartWrap').classList.add('hidden');
 
-  if (!data.length) { holder.innerHTML = '<p class="empty">No rounds for this filter yet.</p>'; return; }
+  if (!data.length) { holder.innerHTML = '<p class="empty">No finished rounds recorded yet. Real results appear here once SportyBet matches finish — this site never shows simulated history.</p>'; return; }
 
   let html = '';
   for (const entry of data) {
@@ -414,12 +426,14 @@ setInterval(() => {
   dot.classList.add('blink');
   const remain = Math.max(0, Math.floor((c.phaseUntil - Date.now()) / 1000));
   const cd = document.getElementById('countdown');
-  if (c.phase === 'thinking') {
+  if (c.phase === 'offline' || (c.sourceInfo && c.sourceInfo.source === 'offline')) {
+    cd.textContent = 'waiting for SportyBet data…';
+  } else if (c.phase === 'thinking') {
     cd.textContent = 'matches in play…';
   } else if (remain > 0) {
     const m = String(Math.floor(remain / 60)).padStart(2, '0');
     const s = String(remain % 60).padStart(2, '0');
-    cd.textContent = `bet closes in ${m}:${s}`;
+    cd.textContent = `kickoff in ${m}:${s}`;
   } else {
     cd.textContent = 'waiting for next round…';
   }

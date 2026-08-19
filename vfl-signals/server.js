@@ -1,56 +1,227 @@
 'use strict';
 /*
- * server.js — web + Socket.IO prediction broadcaster (no auth, like realnaps).
+ * server.js — REAL SportyBet data only. No simulation. No fake odds.
  *
- * Two data modes per bookie:
- *   LIVE (real SportyBet data) — a local fetcher running in a SportyBet
- *     market (e.g. Nigeria) POSTs real fixtures/odds/results to /ingest.
- *     The broadcaster builds predictions from that feed.
- *   SIMULATED — if no live feed for FEED_TTL, it falls back to the built-in
- *     generator so the site never looks broken. The UI shows which mode
- *     is active via the <site>-source event.
+ * Data source: SportyBet's public factsCenter API (the same one their web
+ * app uses). We poll the Virtual England League every POLL_MS:
+ *
+ *   GET /api/ng/factsCenter/pcUpcomingEvents
+ *       ?sportId=sr:sport:202120001   (vFootball)
+ *       &marketId=1,18,10,29          (1X2 + O/U ladder + DC + GG/NG)
+ *       &pageSize=100
+ *
+ * A "round" = the group of real matches sharing the same real kickoff time
+ * (10 matches). The pick = the 3 matches with the highest Over-1.5 implied
+ * probability in the next round (a transparent, odds-based selection).
+ *
+ * Phase is driven by real kickoff times:
+ *   predicting — next round's bets are open (countdown to real kickoff)
+ *   thinking    — the round is in play (bets closed)
+ *
+ * If the API is unreachable the site shows OFFLINE — we never invent data.
  */
 
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { Server } = require('socket.io');
-const { createBookie, buildRoundFromFeed, TEAMS } = require('./engine');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
-const PREDICT_MS = Number(process.env.PREDICT_SECONDS || 25) * 1000; // picks live ~25s before "bet closes"
-const THINK_MS = Number(process.env.THINK_SECONDS || 12) * 1000;     // matches playing / "Thinking"
-const BROADCAST_MS = 3000; // realnaps re-broadcasts ~every 3s
-const FEED_TTL = Number(process.env.FEED_TTL_SECONDS || 120) * 1000; // live feed freshness window
-const INGEST_TOKEN = process.env.INGEST_TOKEN || ''; // shared secret for POST /ingest
+const POLL_MS = Number(process.env.POLL_SECONDS || 20) * 1000;
+const BROADCAST_MS = 3000;
+const PLAY_WINDOW_MS = 4 * 60 * 1000;      // virtual matches play ~4 min
+const MAX_RESULTS = 1000;
+const INGEST_TOKEN = process.env.INGEST_TOKEN || '';
 
-const bookies = [
-  createBookie({ site: 'sportybet', label: 'SportyBet', seed: 101, week: 7,  roundInWeek: 20, lambda: [2.8, 3.3], pidPrefix: 'SPORTYBET', predictMs: PREDICT_MS }),
-  createBookie({ site: 'betpawa',  label: 'BetPawa',  seed: 202, week: 30, roundInWeek: 12, lambda: [3.2, 3.7], pidPrefix: 'BETPAWA',  predictMs: PREDICT_MS }),
-  createBookie({ site: 'betking',  label: 'BetKing',  seed: 303, week: 4,  roundInWeek: 8,  lambda: [2.7, 3.4], pidPrefix: 'BETKING',  predictMs: PREDICT_MS }),
-];
-const bySite = Object.fromEntries(bookies.map((b) => [b.site, b]));
+const SB_API = 'https://www.sportybet.com/api/ng/factsCenter/pcUpcomingEvents' +
+  '?sportId=sr%3Asport%3A202120001&marketId=1%2C18%2C10%2C29&pageSize=100&pageNum=1';
 
-// live feed state
-const feeds = Object.fromEntries(bookies.map((b) => [b.site, { fixtures: null, results: [], ts: 0 }]));
-const source = Object.fromEntries(bookies.map((b) => [b.site, 'sim']));
-let pendingLiveRound = null; // { site, teams:[], oddsMatrix, pid, time }
+const HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'en-NG,en;q=0.9',
+  'Origin': 'https://www.sportybet.com',
+  'Referer': 'https://www.sportybet.com/ng/',
+};
 
+// ---------- real-data state ---------------------------------------------------
+const state = {
+  online: false,
+  lastFetch: 0,
+  lastError: null,
+  events: [],          // normalized upcoming events (England league)
+  rounds: [],          // groups by kickoff time
+  pick: null,          // current 3-match pick {predictions, roundInfo}
+  phase: 'offline',    // predicting | thinking | offline
+  phaseUntil: 0,
+  results: [],         // REAL completed results (from feeds / future score capture)
+  tracked: new Map(),  // eventId -> {teams, start, odds} while awaiting scores
+};
+
+// ---------- SportyBet parsing --------------------------------------------------
+function extractOddsLadder(markets) {
+  // O/U market id=18 comes as several ladder entries; grab the 1.5 / 2.5 lines
+  const out = { o15: '', o25: '', u15: '', u25: '', p15: 0 };
+  for (const m of markets || []) {
+    if (String(m.id) !== '18') continue;
+    const over = (m.outcomes || []).find((o) => o.desc === 'Over 1.5');
+    if (over) { out.o15 = over.odds; out.p15 = parseFloat(over.probability || 0); }
+    const over25 = (m.outcomes || []).find((o) => o.desc === 'Over 2.5');
+    if (over25) out.o25 = over25.odds;
+    const under15 = (m.outcomes || []).find((o) => o.desc === 'Under 1.5');
+    if (under15) out.u15 = under15.odds;
+    const under25 = (m.outcomes || []).find((o) => o.desc === 'Under 2.5');
+    if (under25) out.u25 = under25.odds;
+  }
+  return out;
+}
+
+function normalizeEvents(json) {
+  const data = json && json.data;
+  if (!data || !Array.isArray(data.tournaments)) return [];
+  const events = [];
+  for (const t of data.tournaments) {
+    if (t.categoryId !== 'sv:category:202120001') continue; // England league only
+    for (const e of t.events || []) {
+      const odds = extractOddsLadder(e.markets);
+      if (!odds.o15 && !odds.o25) continue;
+      events.push({
+        eventId: e.eventId,
+        gameId: e.gameId,
+        home: e.homeTeamName,
+        away: e.awayTeamName,
+        start: e.estimateStartTime,
+        matchStatus: e.matchStatus,
+        productStatus: e.productStatus,
+        odds,
+      });
+    }
+  }
+  return events;
+}
+
+function groupRounds(events) {
+  const byStart = new Map();
+  for (const e of events) {
+    if (!byStart.has(e.start)) byStart.set(e.start, []);
+    byStart.get(e.start).push(e);
+  }
+  return [...byStart.entries()]
+    .map(([start, evs]) => ({
+      start,
+      events: evs.sort((a, b) => (b.odds.p15 || 0) - (a.odds.p15 || 0)), // best O1.5 first
+    }))
+    .sort((a, b) => a.start - b.start);
+}
+
+function isoWeek(ms) {
+  const d = new Date(ms);
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  return Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+}
+
+function fmtTime(ms) {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function buildPick(round) {
+  const top3 = round.events.slice(0, 3);
+  return {
+    betting_site: 'sportybet',
+    league: 'ENGLAND',
+    week: String(isoWeek(round.start)),
+    round: String(top3[0] ? top3[0].gameId : ''),
+    PID: `SPORTYBET::${fmtTime(round.start)} ${new Date(round.start).toLocaleDateString('en-GB')}`,
+    kickoff: round.start,
+    predictions: top3.map((e) => ({
+      Game: e.gameId,
+      Team: `${e.home} vs ${e.away}`,
+      allOdds: [e.odds.o15, e.odds.o25, e.odds.u15, e.odds.u25],
+    })),
+  };
+}
+
+// ---------- poll loop (the whole backend) ---------------------------------------
+async function pollSportyBet() {
+  try {
+    const res = await fetch(SB_API, { headers: HEADERS, signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    const events = normalizeEvents(json);
+    if (!events.length) throw new Error('no England-league events in response');
+
+    state.online = true;
+    state.lastFetch = Date.now();
+    state.lastError = null;
+    state.events = events;
+    state.rounds = groupRounds(events);
+
+    // track picked events for later score capture
+    for (const e of events) {
+      if (!state.tracked.has(e.eventId)) {
+        state.tracked.set(e.eventId, {
+          teams: `${e.home} vs ${e.away}`,
+          start: e.start,
+          odds: [e.odds.o15, e.odds.o25, e.odds.u15, e.odds.u25],
+        });
+      }
+    }
+    updatePhase();
+  } catch (err) {
+    state.online = false;
+    state.lastError = String(err.message || err);
+    state.phase = 'offline';
+    state.pick = null;
+    console.log(`[sportybet] fetch failed: ${state.lastError}`);
+  }
+}
+
+function updatePhase() {
+  const now = Date.now();
+  // a round currently in play?
+  const playing = state.rounds.find((r) => r.start <= now && now <= r.start + PLAY_WINDOW_MS);
+  if (playing) {
+    state.phase = 'thinking';
+    state.phaseUntil = playing.start + PLAY_WINDOW_MS;
+    state.pick = null;
+    return;
+  }
+  const next = state.rounds.find((r) => r.start > now);
+  if (!next) {
+    state.phase = 'offline'; // no upcoming round visible right now
+    state.pick = null;
+    state.phaseUntil = 0;
+    return;
+  }
+  state.phase = 'predicting';
+  state.phaseUntil = next.start;
+  state.pick = buildPick(next);
+}
+
+function mergeRealResult(site, entry) {
+  const sig = (entry.match || []).join('|').toLowerCase();
+  const exists = state.results.some((e) => (e.match || []).join('|').toLowerCase() === sig);
+  if (exists) return;
+  state.results.unshift(entry);
+  if (state.results.length > MAX_RESULTS) state.results.length = MAX_RESULTS;
+}
+
+// ---------- web server ------------------------------------------------------------
 const PUBLIC = path.join(__dirname, 'public');
 const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.json': 'application/json',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-  '.woff2': 'font/woff2',
+  '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8', '.json': 'application/json',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
 };
 
 const server = http.createServer((req, res) => {
-  // POST /ingest — receive real fixtures/odds/results from the local fetcher
+  // POST /ingest — push REAL results/odds (e.g. from a Lagos-based fetcher)
   if (req.method === 'POST' && req.url.startsWith('/ingest')) {
     let body = '';
     req.on('data', (c) => { body += c; if (body.length > 2e6) req.destroy(); });
@@ -62,24 +233,21 @@ const server = http.createServer((req, res) => {
           res.end(JSON.stringify({ ok: false, error: 'bad token' }));
           return;
         }
-        const site = String(payload.site || 'sportybet').toLowerCase();
-        const b = bySite[site];
-        if (!b) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: 'unknown site' }));
-          return;
-        }
-        if (Array.isArray(payload.fixtures) && payload.fixtures.length) {
-          feeds[site].fixtures = payload.fixtures;
-          feeds[site].ts = Date.now();
-          source[site] = 'live';
-        }
-        if (Array.isArray(payload.results) && payload.results.length) {
-          feeds[site].results = payload.results;
-          mergeResults(site, payload.results);
+        let added = 0;
+        for (const r of (payload.results || [])) {
+          if (!r || !Array.isArray(r.match) || !Array.isArray(r.result)) continue;
+          const entry = {
+            match: r.match,
+            time: r.time || '',
+            result: r.result.map((g) => parseInt(g, 10)).filter((g) => !isNaN(g)),
+            odds: Array.isArray(r.odds) && r.odds.length === 4 ? r.odds : [[], [], [], []],
+          };
+          const before = state.results.length;
+          mergeRealResult(payload.site || 'sportybet', entry);
+          if (state.results.length > before) added++;
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, mode: source[site], fixtures: (feeds[site].fixtures || []).length }));
+        res.end(JSON.stringify({ ok: true, addedResults: added }));
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'bad json' }));
@@ -94,135 +262,55 @@ const server = http.createServer((req, res) => {
   if (!file.startsWith(PUBLIC)) { res.writeHead(403); res.end('Forbidden'); return; }
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404); res.end('Not found'); return; }
-    res.writeHead(200, {
-      'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
-      'Cache-Control': 'no-cache',
-    });
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
     res.end(data);
   });
 });
 
 const io = new Server(server, { cors: { origin: '*' } });
 
-// Merge real results from the fetcher into the bookie's history log.
-function mergeResults(site, results) {
-  const b = bySite[site];
-  for (const r of results) {
-    if (!r || !Array.isArray(r.match) || !Array.isArray(r.result)) continue;
-    const sig = (r.match || []).join('|').toLowerCase();
-    const exists = b.results.some((e) => (e.match || []).join('|').toLowerCase() === sig);
-    if (exists) continue;
-    const goals = r.result.map((g) => parseInt(g, 10)).filter((g) => !isNaN(g));
-    const odds = Array.isArray(r.odds) && r.odds.length === 4 ? r.odds : fillOdds(goals);
-    b.results.unshift({
-      match: r.match,
-      time: r.time || `${new Date().toTimeString().slice(0, 5)} - week * ${b.week}`,
-      result: goals,
-      odds,
-    });
-  }
-  if (b.results.length > 1000) b.results.length = 1000;
-}
-
-function fillOdds(goals) {
-  // model odds for the real goals if the fetcher didn't provide odds
-  const m = [0, 1, 2, 3].map(() => goals.map(() => '1.20'));
-  return m;
-}
-
-// Fresh feed? Build the next round from REAL fixtures, otherwise simulate.
-function nextRound(b, t) {
-  const feed = feeds[b.site];
-  const fresh = source[b.site] === 'live' && feed.fixtures && (Date.now() - feed.ts) < FEED_TTL;
-  const rng = (() => { let s = b.seed * 2654435761 + b.roundIndex * 97; return () => { s = (s + 0x6D2B79F5) | 0; let x = Math.imul(s ^ (s >>> 15), 1 | s); x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x; return ((x ^ (x >>> 14)) >>> 0) / 4294967296; }; })();
-  if (fresh) {
-    const r = buildRoundFromFeed(rng, b, b.week, b.roundInWeek, t, { fixtures: feed.fixtures, meta: feed.meta });
-    pendingLiveRound = { site: b.site, teams: r.pick.predictions.map((p) => p.Team), pid: r.pick.PID, time: r.resultEntry.time };
-    return r;
-  }
-  source[b.site] = 'sim';
-  const teams = TEAMS.slice();
-  for (let i = teams.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [teams[i], teams[j]] = [teams[j], teams[i]]; }
-  const fixtures = [];
-  for (let i = 0; i < 8; i++) fixtures.push({ slot: i + 1, home: teams[i * 2], away: teams[i * 2 + 1] });
-  return buildRoundFromFeed(rng, b, b.week, b.roundInWeek, t, { fixtures });
-}
-
-// Instant snapshot on connect so a fresh page paints immediately.
-io.on('connection', (socket) => {
-  for (const b of bookies) {
-    socket.emit(`${b.site}-prediction`, b.phase === 'predicting' ? b.prediction : { ...b.prediction, predictions: [] });
-    socket.emit(`${b.site}-result`, b.results);
-    socket.emit(`${b.site}-phase`, { phase: b.phase, until: b.phaseUntil, week: b.week, round: b.roundInWeek, pid: b.prediction.PID });
-    socket.emit(`${b.site}-source`, sourceInfo(b.site));
-  }
-});
-
-function sourceInfo(site) {
-  const f = feeds[site];
+function phaseEvent() {
   return {
-    source: source[site],
-    fixtures: (f.fixtures || []).length,
-    lastFeedAt: f.ts || null,
-    ageSec: f.ts ? Math.round((Date.now() - f.ts) / 1000) : null,
+    phase: state.phase,
+    until: state.phaseUntil,
+    week: state.pick ? state.pick.week : '',
+    round: state.pick ? state.pick.round : '',
+    pid: state.pick ? state.pick.PID : null,
+    kickoff: state.pick ? state.pick.kickoff : null,
   };
 }
 
-// The main broadcast loop (the heart of the workflow).
+function sourceEvent() {
+  return {
+    source: state.online ? 'live' : 'offline',
+    ageSec: state.lastFetch ? Math.round((Date.now() - state.lastFetch) / 1000) : null,
+    fixtures: state.events.length,
+    rounds: state.rounds.length,
+    error: state.lastError,
+  };
+}
+
+io.on('connection', (socket) => {
+  socket.emit('sportybet-prediction', state.phase === 'predicting' ? state.pick : { betting_site: 'sportybet', league: 'ENGLAND', predictions: [] });
+  socket.emit('sportybet-result', state.results);
+  socket.emit('sportybet-phase', phaseEvent());
+  socket.emit('sportybet-source', sourceEvent());
+});
+
 setInterval(() => {
-  const now = Date.now();
-  for (const b of bookies) {
-    // custom tick: when the thinking phase ends, build from live feed if fresh
-    if (b.phase === 'predicting' && now >= b.phaseUntil) {
-      b.phase = 'thinking';
-      b.phaseUntil = now + THINK_MS;
-    } else if (b.phase === 'thinking' && now >= b.phaseUntil) {
-      const t = new Date(now);
-      const r = nextRound(b, t);
-
-      // settle the finished round
-      if (pendingLiveRound && pendingLiveRound.site === b.site) {
-        // look for a real result that matches the finished round
-        const res = feeds[b.site].results || [];
-        const sigOf = (t) => (t || []).join('|').toLowerCase();
-        const match = res.find((rr) => rr.match && sigOf(rr.match) === sigOf(pendingLiveRound.teams));
-        const already = b.results.some((e) => sigOf(e.match) === sigOf(pendingLiveRound.teams));
-        if (match && !already) {
-          const goals = match.result.map((g) => parseInt(g, 10)).filter((g) => !isNaN(g));
-          const odds = Array.isArray(match.odds) && match.odds.length === 4 ? match.odds : fillOdds(goals);
-          b.results.unshift({ match: pendingLiveRound.teams, time: pendingLiveRound.time, result: goals, odds });
-          if (b.results.length > 1000) b.results.length = 1000;
-        } else if (!already) {
-          // no real result yet — append the provisional entry (flagged pending)
-          b.results.unshift({ ...r.resultEntry, pending: true });
-          if (b.results.length > 1000) b.results.length = 1000;
-        }
-        pendingLiveRound = null;
-      } else {
-        b.results.unshift(r.resultEntry);
-        if (b.results.length > 1000) b.results.length = 1000;
-      }
-
-      b.roundIndex++;
-      b.roundInWeek++;
-      if (b.roundInWeek > 26) { b.roundInWeek = 1; b.week = b.week >= 38 ? 1 : b.week + 1; }
-      b.prediction = r.pick;
-      b.phase = 'predicting';
-      b.phaseUntil = now + PREDICT_MS;
-    }
-  }
-  for (const b of bookies) {
-    io.emit(`${b.site}-prediction`, b.phase === 'predicting' ? b.prediction : { ...b.prediction, predictions: [] });
-    io.emit(`${b.site}-result`, b.results);
-    io.emit(`${b.site}-phase`, { phase: b.phase, until: b.phaseUntil, week: b.week, round: b.roundInWeek, pid: b.prediction.PID });
-    io.emit(`${b.site}-source`, sourceInfo(b.site));
-  }
+  io.emit('sportybet-prediction', state.phase === 'predicting' ? state.pick : { betting_site: 'sportybet', league: 'ENGLAND', predictions: [] });
+  io.emit('sportybet-result', state.results);
+  io.emit('sportybet-phase', phaseEvent());
+  io.emit('sportybet-source', sourceEvent());
 }, BROADCAST_MS);
+
+// boot
+pollSportyBet();
+setInterval(pollSportyBet, POLL_MS);
 
 server.listen(PORT, HOST, () => {
   console.log(`[server] http://${HOST}:${PORT}`);
-  console.log(`[server] bookies: ${bookies.map((b) => b.site).join(', ')}`);
-  console.log(`[server] round cycle: ${PREDICT_MS / 1000}s predicting + ${THINK_MS / 1000}s thinking`);
-  console.log(`[server] live-feed TTL: ${FEED_TTL / 1000}s | ingest token: ${INGEST_TOKEN ? 'SET' : 'NOT SET (any token accepted)'}`);
-  console.log(`[server] broadcasting every ${BROADCAST_MS / 1000}s to all clients (no auth)`);
+  console.log(`[server] data: REAL SportyBet Virtual England League (factsCenter API), poll every ${POLL_MS / 1000}s`);
+  console.log(`[server] no simulation — if SportyBet is unreachable the site shows OFFLINE`);
+  console.log(`[server] ingest token: ${INGEST_TOKEN ? 'SET' : 'NOT SET (any token accepted)'}`);
 });
