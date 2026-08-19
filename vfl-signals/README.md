@@ -2,19 +2,47 @@
 
 A working clone of the workflow observed on **realnaps.com** — but every
 visitor sees the predictions immediately. No premium tier, no login, no
-padlocks.
+padlocks. Now with a **REAL SPORTYBET DATA MODE**.
+
+## Real SportyBet data — how it works
+
+SportyBet's virtual endpoints are geo-gated to their African markets, so the
+data pipeline has two hops:
+
+```
+Your PC in Nigeria (scripts/sportybet-fetcher.js)
+   │  fetches real virtual fixtures + odds from sportybet.com
+   │  POST /ingest (token-protected) every run
+   ▼
+Render backend (broadcasts LIVE picks; simulates only if feed goes stale)
+   ▼
+Netlify frontend (badge shows: LIVE SPORTYBET · N games · Xs ago  vs  SIMULATED)
+```
+
+### Run the fetcher on your machine in Lagos
+
+```bash
+node scripts/sportybet-fetcher.js --backend https://vfl-signals.onrender.com --token <INGEST_TOKEN>
+# or first, discover which endpoint works on SportyBet's current build:
+node scripts/sportybet-fetcher.js --dump
+```
+
+`INGEST_TOKEN` is set on the Render service (`INGEST_TOKEN.txt` in this
+folder). Run it on a loop (e.g. Windows Task Scheduler / cron every 30s),
+which also keeps the free Render service warm.
 
 ## How it maps to the real RealNaps backend
 
 | RealNaps (observed) | This project |
 |---|---|
-| Node.js Socket.IO broadcaster on port 3000 | same — `server.js`, port 3000 |
-| Broadcasts every ~3 s, no authentication | same |
+| Node.js Socket.IO broadcaster on port 3000, no authentication | same — `server.js`, port 3000 |
+| Broadcasts every ~3 s | same |
 | `<site>-prediction` → `{betting_site, league:"ENGLAND", week, PID, predictions:[{Game, Team, allOdds:[O1.5,O2.5,U1.5,U2.5]}]}` | byte-compatible shape (`engine.js`) |
-| `<site>-result` → 1,000-entry log, newest first (`match`, `time:"HH:MM - week * N"`, `result:[total goals ×3]`, `odds:[4 markets × 3]`) | same, capped at 1,000 |
-| "Thinking" gap while matches play, picks live ~2 min before close | same state machine (`predicting` → `thinking` → results) |
-| Client engine (`realnapsAI.js`) = season filters, Flat/Martingale ×1.5–×4, win-rate %, weekly chart, "Next ₦X" suggestion | ported 1:1 into `public/app.js` (same math & thresholds) |
-| Data source = scraped virtual-fixture schedule + bookmaker odds | simulated in `engine.js` (Poisson-based odds + empirical goal distribution measured from their own 3,000-match log) |
+| `<site>-result` → 1,000-entry log, newest first | same, capped at 1,000 |
+| "Thinking" gap while matches play, picks live before close | same state machine |
+| Client engine (`realnapsAI.js`) analytics | ported 1:1 into `public/app.js` |
+| Scraped virtual fixtures + odds | `scripts/sportybet-fetcher.js` → `/ingest` (real data) with simulated fallback |
+| `<site>-source` | extra event: `{source:"live"|"sim", fixtures, ageSec}` |
 
 ## Run it locally
 
@@ -24,8 +52,7 @@ npm start            # http://localhost:3000
 ```
 
 Config via env: `PORT`, `PREDICT_SECONDS` (default **25**), `THINK_SECONDS`
-(default **12**) — a full round cycle takes about 37 seconds so you can watch
-the workflow (predicting → thinking → result → next round) quickly.
+(default **12**), `FEED_TTL_SECONDS` (default 120), `INGEST_TOKEN`.
 
 Verify the broadcast without a browser:
 
@@ -58,18 +85,13 @@ Netlify serves static files only — it **cannot** run the Socket.IO server
 npx netlify-cli deploy --dir=public --prod
 ```
 
-The first run will ask you to log in to Netlify (or pass
-`--auth <personal-access-token>` from Netlify → User settings →
-Applications). After deploy you get `https://<site>.netlify.app`.
-
 > **Tip:** a zero-account alternative is **Netlify Drop** — drag the
 > `public/` folder onto https://app.netlify.com/drop in your browser.
 
 ### Or skip the split entirely
 
 Render's blueprint also serves the frontend (the Node server hosts
-`public/`), so the whole site can live on the single Render URL — Netlify
-is only needed if you specifically want the frontend there.
+`public/`), so the whole site can live on the single Render URL.
 
 ## Structure
 
