@@ -23,8 +23,9 @@ npm install
 npm start            # http://localhost:3000
 ```
 
-Config via env: `PORT`, `PREDICT_SECONDS` (default 100), `THINK_SECONDS`
-(default 50).
+Config via env: `PORT`, `PREDICT_SECONDS` (default **25**), `THINK_SECONDS`
+(default **12**) — a full round cycle takes about 37 seconds so you can watch
+the workflow (predicting → thinking → result → next round) quickly.
 
 Verify the broadcast without a browser:
 

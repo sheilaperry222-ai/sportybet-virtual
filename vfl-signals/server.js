@@ -19,8 +19,8 @@ const { createBookie, tick } = require('./engine');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
-const PREDICT_MS = Number(process.env.PREDICT_SECONDS || 100) * 1000; // picks live ~2 min before "bet closes" (like realnaps)
-const THINK_MS = Number(process.env.THINK_SECONDS || 50) * 1000;     // matches playing / "Thinking"
+const PREDICT_MS = Number(process.env.PREDICT_SECONDS || 25) * 1000; // picks live ~25s before "bet closes"
+const THINK_MS = Number(process.env.THINK_SECONDS || 12) * 1000;     // matches playing / "Thinking"
 const BROADCAST_MS = 3000; // realnaps re-broadcasts ~every 3s
 
 const bookies = [
