@@ -69,6 +69,24 @@ for (const site in SITES) {
     if (d) { c.phase = d.phase; c.phaseUntil = d.until || 0; }
     if (site === active) renderPhase();
   });
+  socket.on(`${site}-source`, (d) => {
+    const c = cache[site];
+    c.sourceInfo = d || { source: 'sim' };
+    if (site === active) renderSource();
+  });
+}
+
+function renderSource() {
+  const el = document.getElementById('sourceVal');
+  const c = cache[active];
+  const info = c.sourceInfo || {};
+  if (info.source === 'live') {
+    el.textContent = `LIVE SPORTYBET · ${info.fixtures ?? '?'} games · ${info.ageSec != null ? info.ageSec + 's ago' : ''}`.trim();
+    el.className = 'src-live';
+  } else {
+    el.textContent = 'SIMULATED (no live feed)';
+    el.className = 'src-sim';
+  }
 }
 
 // ---------- helpers (ports of realnapsAI.js) --------------------------------

@@ -80,6 +80,56 @@ const fmtTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 const fmtPidDate = (d) =>
   `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
+// Build a prediction from a REAL feed (pushed by the local SportyBet fetcher).
+// feed = { fixtures: [{home, away, slot, odds:{o15,o25,u15,u25}}...], meta }
+function buildRoundFromFeed(rng, bookie, week, roundInWeek, t, feed) {
+  const fixtures = (feed.fixtures || []).map((f, i) => ({
+    slot: f.slot || i + 1,
+    home: String(f.home || '').toUpperCase(),
+    away: String(f.away || '').toUpperCase(),
+    odds: f.odds || null,
+  })).filter((f) => f.home && f.away);
+
+  // "analysis": pick the 3 most goal-likely games from the real schedule
+  // (stand-in for RealNaps' server-side selection)
+  const scored = fixtures.map((f) => {
+    const o = f.odds || {};
+    const o15 = parseFloat(o.o15) || 0, o25 = parseFloat(o.o25) || 0;
+    const score = (o15 ? 1 / o15 : 0) + (o25 ? 1 / o25 : 0) + rng() * 0.05;
+    return { ...f, score };
+  });
+  scored.sort((x, y) => y.score - x.score);
+  const picked = scored.slice(0, 3);
+
+  // odds may come from the feed; fill gaps with the model so all 4 markets exist
+  const predictions = picked.map((p) => {
+    const lambda = 2.9; // fallback
+    const m = oddsFor(lambda);
+    const o = p.odds || {};
+    const allOdds = [o.o15 || m.o15, o.o25 || m.o25, o.u15 || m.u15, o.u25 || m.u25];
+    return { Game: p.slot, Team: `${p.home} vs ${p.away}`, allOdds };
+  });
+
+  const pick = {
+    betting_site: bookie.site,
+    league: (feed.meta && feed.meta.league) || 'ENGLAND',
+    week: String(week),
+    PID: `${bookie.pidPrefix}::${fmtPidDate(t)}`,
+    predictions,
+  };
+
+  // provisional result entry (real goals arrive later via results ingest)
+  const goals = picked.map(() => pickGoals(rng));
+  const oddsMatrix = [0, 1, 2, 3].map((mIdx) => predictions.map((p) => p.allOdds[mIdx]));
+  const resultEntry = {
+    match: picked.map((p) => `${p.home} vs ${p.away}`),
+    time: `${fmtTime(t)} - week * ${week}`,
+    result: goals,
+    odds: oddsMatrix,
+  };
+  return { pick, resultEntry };
+}
+
 // Walk +/- N rounds through (week, roundInWeek), wrapping weeks 1..38.
 function weekAt(week, roundInWeek, deltaRounds) {
   const perSeason = 38 * ROUNDS_PER_WEEK;
@@ -219,4 +269,4 @@ function tick(b, now, PREDICT_MS, THINK_MS) {
   return true;
 }
 
-module.exports = { createBookie, tick, TEAMS };
+module.exports = { createBookie, tick, buildRoundFromFeed, TEAMS };

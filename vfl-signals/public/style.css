@@ -129,6 +129,8 @@ main { width: 100%; max-width: 1060px; margin: 0 auto; padding: 18px 16px 40px; 
 .bg-warning { background: var(--warning); }
 .bg-success { background: var(--accent); }
 .green { color: #3fb950; } .red { color: #f85149; }
+.src-live { color: #3fb950; }
+.src-sim { color: var(--gold); }
 .empty { color: var(--muted); padding: 20px; text-align: center; }
 .chart-wrap { margin-top: 8px; }
 .hidden { display: none !important; }
