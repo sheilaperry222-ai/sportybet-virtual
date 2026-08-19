@@ -1,0 +1,18 @@
+# Render Blueprint — deploys the whole app (frontend + socket backend)
+# as ONE free web service. This is the zero-config backend option.
+#
+#  1. Push this folder to a GitHub repo
+#  2. On render.com: New → Blueprint → pick the repo
+#  3. Copy the resulting https://...onrender.com URL into
+#     public/config.js as window.VFL_SOCKET_URL (for the Netlify frontend)
+#     — or just use the Render URL directly as your whole site.
+
+services:
+  - type: web
+    name: vfl-signals
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /
+    autoDeploy: true

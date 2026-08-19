@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VFL SIGNALS — England League (live predictions)</title>
+  <meta name="description" content="Free virtual football winner predictions. Over/Under 1.5 & 2.5 picks for the England league, broadcast live.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="brand">⚡ VFL&nbsp;SIGNALS <span class="tag">ENGLAND LEAGUE</span></div>
+    <nav class="bookie-tabs" id="bookieTabs">
+      <button class="bookie-tab active" data-site="sportybet">SportyBet</button>
+      <button class="bookie-tab" data-site="betpawa">BetPawa</button>
+      <button class="bookie-tab" data-site="betking">BetKing</button>
+    </nav>
+    <div class="live-chip"><span class="dot" id="liveDot"></span><span id="liveText">LIVE</span></div>
+  </header>
+
+  <main>
+    <!-- hero -->
+    <section class="card hero">
+      <div class="hero-left">
+        <div class="hero-badge">
+          <svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true">
+            <path fill="currentColor" d="M12 2 3 6v6c0 5.25 3.8 9.4 9 10 5.2-.6 9-4.75 9-10V6l-9-4Zm-2 14v-2h1.5v-3H10v-2h4v5H15.5v2H10Z"/>
+          </svg>
+          <div>
+            <h1 id="heroTitle">SPORTYBET WINNER PREDICTIONS</h1>
+            <div class="meta">
+              <span>Season: <b id="seasonVal">—</b></span>
+              <span>Week : <b id="weekVal">—</b></span>
+              <span class="pid">PID: <span id="pidVal">—</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="hero-right">
+        <span class="badge" id="phaseBadge">Thinking</span>
+        <span class="countdown" id="countdown"></span>
+      </div>
+    </section>
+
+    <!-- live picks -->
+    <section class="picks" id="picksRow"></section>
+
+    <!-- controls -->
+    <section class="card controls">
+      <div class="ctl-row">
+        <label>Market
+          <select id="pick" class="sel">
+            <option value="O15">Over 1.5</option>
+            <option value="O25">Over 2.5</option>
+            <option value="U15">Under 1.5</option>
+            <option value="U25">Under 2.5</option>
+          </select>
+        </label>
+
+        <label>Picks
+          <span class="btn-group">
+            <button class="pick-count-btn active" data-pick-count="1">One Pick</button>
+            <button class="pick-count-btn" data-pick-count="2">Two Picks</button>
+          </span>
+        </label>
+
+        <label>Betting
+          <select id="bettingStyle" class="sel">
+            <option value="singles">Singles</option>
+            <option value="acc">Accumulated</option>
+          </select>
+        </label>
+
+        <label>Strategy
+          <select id="strategy" class="sel">
+            <option value="flat">Flat Strategy</option>
+            <option value="martingale1_5">Martingale Strategy X1.50</option>
+            <option value="martingale2">Martingale Strategy X2</option>
+            <option value="martingale3">Martingale Strategy X3</option>
+            <option value="martingale4">Martingale Strategy X4</option>
+          </select>
+        </label>
+
+        <label>Stake ₦
+          <span class="stake-box">
+            <input type="number" id="baseStake" min="50" step="50" value="1000">
+            <button id="updateBaseStake" class="btn">Update Stake</button>
+          </span>
+        </label>
+      </div>
+    </section>
+
+    <!-- analytics -->
+    <section class="card analytics" id="analyticsRow">
+      <div class="stat"><div class="stat-label">Winning rate</div><div class="stat-val" id="analyticAcc">—%</div></div>
+      <div class="stat"><div class="stat-label">Winning logs</div><div class="stat-val" id="analyticLogs">—</div></div>
+      <div class="stat"><div class="stat-label">Total Wins</div><div class="stat-val green" id="analyticWon">₦0</div></div>
+      <div class="stat"><div class="stat-label">Total Bets</div><div class="stat-val" id="analyticBet">₦0</div></div>
+      <div class="stat next"><div class="stat-label">Suggested stake</div><div class="stat-val gold" id="nextStake">Next ₦1,000</div></div>
+    </section>
+
+    <!-- history -->
+    <section class="card history">
+      <div class="history-head">
+        <button class="btn ghost" id="prevP">Previous Predictions ▾</button>
+        <div class="history-filters">
+          <select id="season" class="sel small">
+            <option value="ALL">All</option>
+            <option value="C">Current Season</option>
+            <option value="P1">Last Season</option>
+            <option value="L2">Last 2 Season</option>
+          </select>
+          <select id="view" class="sel small">
+            <option value="table">Table</option>
+            <option value="graph">Graph</option>
+          </select>
+        </div>
+      </div>
+      <div id="prevHolder" class="prev-holder"></div>
+      <div id="chartWrap" class="chart-wrap hidden"><canvas id="myChart" height="110"></canvas></div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>⚡ VFL SIGNALS — demo of the RealNaps workflow: schedule → pick 3 → broadcast over Socket.IO (no login) → log results → strategy math.</p>
+    <p class="fine">Virtual football outcomes are generated by random software. This site is a technical demo: no system can guarantee winnings. Bet responsibly. 18+.</p>
+  </footer>
+
+  <script src="/vendor/chart.min.js"></script>
+  <script src="/vendor/socket.io.min.js"></script>
+  <script src="/config.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

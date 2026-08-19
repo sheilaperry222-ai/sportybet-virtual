@@ -1,0 +1,20 @@
+{
+  "name": "vfl-signals",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "probe": "node scripts/probe.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "RealNaps-style virtual football prediction broadcaster (no paywall)",
+  "dependencies": {
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
