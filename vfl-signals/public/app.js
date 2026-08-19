@@ -219,7 +219,7 @@ function renderPrediction() {
       <div class="thinking-panel">
         <div class="spinner"></div>
         <div class="thinking-txt">Thinking</div>
-        <div class="thinking-sub">bets closed — matches in play, next real round soon…</div>
+        <div class="thinking-sub">bets closed — matches in play, next round soon…</div>
       </div>`;
     return;
   }

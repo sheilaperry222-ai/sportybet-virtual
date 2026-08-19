@@ -1,63 +1,40 @@
 'use strict';
 /*
- * scripts/sportybet-fetcher.js — run this ON YOUR OWN MACHINE IN NIGERIA
- * (SportyBet's virtual endpoints are geo-gated; they answer from Lagos).
+ * scripts/sportybet-fetcher.js — RESULT SCRAPER. Run this on a machine in a
+ * SportyBet market (e.g. Lagos, Nigeria). It grabs the FINISHED virtual
+ * football results (the data the site needs for its win-rate and history
+ * log) and posts them to the backend's /ingest endpoint.
  *
- * It:
- *   1. fetches SportyBet's scheduled virtual football fixtures + odds
- *      (candidate endpoints; prints which one works)
- *   2. normalizes them into the backend's fixture shape
- *   3. POSTs them to the Render backend /ingest endpoint
+ * Why from Lagos: SportyBet's scheduled-virtual results APIs reject foreign
+ * IPs (error 19997). Picks/odds are fetched server-side from anywhere —
+ * only the results need this script.
  *
  * Usage:
- *   node scripts/sportybet-fetcher.js --backend https://vfl-signals.onrender.com --token YOUR_TOKEN
- *   node scripts/sportybet-fetcher.js --dump          # just save raw responses for inspection
+ *   node scripts/sportybet-fetcher.js --backend https://vfl-signals.onrender.com --token <TOKEN>
+ *   node scripts/sportybet-fetcher.js --dump    # inspect raw responses, no push
  *
- * No dependencies required (Node 18+, global fetch).
+ * Loop it (Windows: Task Scheduler; Linux/macOS: cron or while true):
+ *   while true; do node scripts/sportybet-fetcher.js --backend ... --token ...; sleep 60; done
  */
 
 const DEFAULT_BACKEND = process.env.VFL_BACKEND || 'https://vfl-signals.onrender.com';
 const TOKEN = process.env.VFL_INGEST_TOKEN || '';
 
-// Candidate endpoints (order = priority). The exact working paths depend on
-// SportyBet's current build; the script tries them all and reports which one
-// returns fixture data.
-const ENDPOINTS = [
-  {
-    name: 'scheduledVirtual.list',
-    url: 'https://www.sportybet.com/api/ng/scheduledVirtual/list',
-  },
-  {
-    name: 'virtual.lobby',
-    url: 'https://www.sportybet.com/api/ng/virtual/lobby',
-  },
-  {
-    name: 'virtual.sportList',
-    url: 'https://www.sportybet.com/api/ng/virtual/sportList',
-  },
-  {
-    name: 'virtual.football.leagues',
-    url: 'https://www.sportybet.com/api/ng/virtual/football/leagues',
-  },
-  {
-    name: 'virtual.football.schedule',
-    url: 'https://www.sportybet.com/api/ng/virtual/football/schedule',
-  },
-];
-
-const RESULTS_ENDPOINTS = [
-  {
-    name: 'virtual.results',
-    url: 'https://www.sportybet.com/api/ng/virtual/results',
-  },
-  {
-    name: 'scheduledVirtual.results',
-    url: 'https://www.sportybet.com/api/ng/scheduledVirtual/results',
-  },
-  {
-    name: 'virtual.football.results',
-    url: 'https://www.sportybet.com/api/ng/virtual/football/results',
-  },
+// Candidate results endpoints (priority order). The exact working path
+// depends on SportyBet's current build — the script reports which one(s)
+// answer from your IP. Run with --dump to inspect.
+const RESULT_ENDPOINTS = [
+  { name: 'scheduledVirtual.list',    url: 'https://www.sportybet.com/api/ng/scheduledVirtual/list' },
+  { name: 'scheduledVirtual.result',  url: 'https://www.sportybet.com/api/ng/scheduledVirtual/result' },
+  { name: 'scheduledVirtual.results', url: 'https://www.sportybet.com/api/ng/scheduledVirtual/results' },
+  { name: 'scheduledVirtual.history', url: 'https://www.sportybet.com/api/ng/scheduledVirtual/history' },
+  { name: 'virtual.results',          url: 'https://www.sportybet.com/api/ng/virtual/results' },
+  { name: 'virtual.resultList',       url: 'https://www.sportybet.com/api/ng/virtual/resultList' },
+  { name: 'virtual.football.results', url: 'https://www.sportybet.com/api/ng/virtual/football/results' },
+  { name: 'virtual.history',          url: 'https://www.sportybet.com/api/ng/virtual/history' },
+  { name: 'virtual.football.history', url: 'https://www.sportybet.com/api/ng/virtual/football/history' },
+  { name: 'virtual.sportList',        url: 'https://www.sportybet.com/api/ng/virtual/sportList' },
+  { name: 'virtual.football.leagues', url: 'https://www.sportybet.com/api/ng/virtual/football/leagues' },
 ];
 
 const HEADERS = {
@@ -65,23 +42,21 @@ const HEADERS = {
   'Accept': 'application/json, text/plain, */*',
   'Accept-Language': 'en-NG,en;q=0.9',
   'Origin': 'https://www.sportybet.com',
-  'Referer': 'https://www.sportybet.com/ng/',
+  'Referer': 'https://www.sportybet.com/ng/sporty-scheduled-virtual',
 };
 
-// ---------- normalization (best-effort across SportyBet response shapes) ------
+// ---------- normalization (tolerant across response shapes) -------------------
 const pick = (obj, keys) => {
   for (const k of keys) {
     if (obj && obj[k] !== undefined && obj[k] !== null) return obj[k];
   }
   return undefined;
 };
-
 const asNum = (v) => {
   if (v === undefined || v === null) return undefined;
   const n = parseFloat(String(v).replace(/,/g, ''));
   return isNaN(n) ? undefined : n;
 };
-
 function walkArrays(node, out = []) {
   if (Array.isArray(node)) {
     if (node.length && node.every((x) => x && typeof x === 'object' && !Array.isArray(x))) out.push(node);
@@ -91,98 +66,43 @@ function walkArrays(node, out = []) {
   }
   return out;
 }
-
-function looksLikeFixture(obj) {
+function teamNames(obj) {
   const home = pick(obj, ['homeName', 'homeTeamName', 'home', 'teamA', 'homeCompetitorName', 'competitor1Name', 'homeTeam']);
   const away = pick(obj, ['awayName', 'awayTeamName', 'away', 'teamB', 'awayCompetitorName', 'competitor2Name', 'awayTeam']);
-  return !!(home && away);
-}
-
-function extractOdds(obj) {
-  // try known market keys, then nested odds objects
-  const o15 = asNum(pick(obj, ['over1_5', 'over15', 'o15', 'overOnePointFive', 'totalOver1_5', 'over_1_5']));
-  const o25 = asNum(pick(obj, ['over2_5', 'over25', 'o25', 'overTwoPointFive', 'totalOver2_5', 'over_2_5']));
-  const u15 = asNum(pick(obj, ['under1_5', 'under15', 'u15', 'underOnePointFive', 'totalUnder1_5', 'under_1_5']));
-  const u25 = asNum(pick(obj, ['under2_5', 'under25', 'u25', 'underTwoPointFive', 'totalUnder2_5', 'under_2_5']));
-  if (o15 || o25 || u15 || u25) return { o15, o25, u15, u25 };
-  // nested odds arrays like markets:[{name:"Over 1.5", odd:1.3}]
-  const markets = pick(obj, ['markets', 'oddsList', 'marketList', 'outcomes', 'odds']);
-  if (Array.isArray(markets)) {
-    const out = {};
-    for (const m of markets) {
-      const name = String(pick(m, ['name', 'marketName', 'outcomeName', 'type']) || '').toLowerCase();
-      const odd = asNum(pick(m, ['odd', 'odds', 'value', 'price', 'decimal']));
-      if (odd === undefined) continue;
-      if (name.includes('over 1.5') || name.includes('o1.5') || name.includes('o/u 1.5') && name.includes('over')) out.o15 = out.o15 || odd;
-      else if (name.includes('over 2.5') || name.includes('o2.5') || name.includes('o/u 2.5') && name.includes('over')) out.o25 = out.o25 || odd;
-      else if (name.includes('under 1.5') || name.includes('u1.5') || name.includes('o/u 1.5') && name.includes('under')) out.u15 = out.u15 || odd;
-      else if (name.includes('under 2.5') || name.includes('u2.5') || name.includes('o/u 2.5') && name.includes('under')) out.u25 = out.u25 || odd;
-    }
-    if (Object.keys(out).length) return out;
-  }
-  return undefined;
-}
-
-function normalizeFixtures(json) {
-  const arrays = walkArrays(json);
-  const fixtures = [];
-  const seen = new Set();
-  for (const arr of arrays) {
-    for (const obj of arr) {
-      if (!looksLikeFixture(obj)) continue;
-      const home = String(pick(obj, ['homeName', 'homeTeamName', 'home', 'teamA', 'homeCompetitorName', 'competitor1Name', 'homeTeam'])).trim();
-      const away = String(pick(obj, ['awayName', 'awayTeamName', 'away', 'teamB', 'awayCompetitorName', 'competitor2Name', 'awayTeam'])).trim();
-      if (!home || !away) continue;
-      // skip finished matches when collecting upcoming fixtures
-      const status = String(pick(obj, ['status', 'matchStatus', 'state']) || '').toLowerCase();
-      const hasScore = pick(obj, ['homeScore', 'awayScore', 'score']) !== undefined;
-      const sig = `${home}|${away}`;
-      if (seen.has(sig)) continue;
-      seen.add(sig);
-      const odds = extractOdds(obj);
-      const slot = asNum(pick(obj, ['round', 'gameNo', 'matchNo', 'id', 'eventId'])) || fixtures.length + 1;
-      fixtures.push({
-        slot,
-        home: home.toUpperCase().replace(/\s+/g, ' '),
-        away: away.toUpperCase().replace(/\s+/g, ' '),
-        odds,
-        finished: /(finished|ended|closed|resulted)/.test(status) || hasScore,
-      });
-    }
-  }
-  return fixtures;
+  if (!home || !away) return null;
+  return [String(home).trim().toUpperCase(), String(away).trim().toUpperCase()];
 }
 
 function normalizeResults(json) {
-  const arrays = walkArrays(json);
   const results = [];
   const seen = new Set();
-  for (const arr of arrays) {
+  for (const arr of walkArrays(json)) {
     for (const obj of arr) {
-      if (!looksLikeFixture(obj)) continue;
-      const home = String(pick(obj, ['homeName', 'homeTeamName', 'home', 'teamA'])).trim();
-      const away = String(pick(obj, ['awayName', 'awayTeamName', 'away', 'teamB'])).trim();
-      const hs = asNum(pick(obj, ['homeScore', 'homeGoals', 'homeResult']));
-      const as = asNum(pick(obj, ['awayScore', 'awayGoals', 'awayResult']));
-      if (hs === undefined || as === undefined) continue;
-      const sig = `${home}|${away}`;
-      if (seen.has(sig)) continue;
+      const names = teamNames(obj);
+      if (!names) continue;
+      const hs = asNum(pick(obj, ['homeScore', 'homeGoals', 'homeResult', 'homeGoal']));
+      const as = asNum(pick(obj, ['awayScore', 'awayGoals', 'awayResult', 'awayGoal']));
+      const sig = `${names[0]}|${names[1]}`;
+      if (hs === undefined || as === undefined || seen.has(sig)) continue;
       seen.add(sig);
-      results.push({ match: [`${home} vs ${away}`], result: [hs + as], time: String(pick(obj, ['startTime', 'time', 'kickoff']) || '') });
+      results.push({
+        match: [`${names[0]} vs ${names[1]}`],
+        result: [hs + as],
+        time: String(pick(obj, ['startTime', 'kickoffTime', 'time', 'matchTime', 'beginTime']) || ''),
+      });
     }
   }
   return results;
 }
 
-// ---------- http helpers ------------------------------------------------------
+// ---------- http ---------------------------------------------------------------
 async function fetchJson(url) {
   const res = await fetch(url, { headers: HEADERS, redirect: 'follow', signal: AbortSignal.timeout(15000) });
   if (!res.ok) return { error: `HTTP ${res.status}` };
   const text = await res.text();
-  try { return { json: JSON.parse(text) }; } catch { return { error: `non-JSON (${text.slice(0, 120)})` }; }
+  try { return { json: JSON.parse(text) }; } catch { return { error: `non-JSON (${text.slice(0, 100)})` }; }
 }
 
-// ---------- main -----------------------------------------------------------------
 async function main() {
   const args = process.argv.slice(2);
   const dumpOnly = args.includes('--dump');
@@ -190,42 +110,32 @@ async function main() {
   const token = args[args.indexOf('--token') + 1] || TOKEN;
 
   console.log(`[fetcher] mode: ${dumpOnly ? 'DUMP (no push)' : 'FETCH+PUSH'}`);
-  console.log(`[fetcher] backend: ${backend} | token: ${token ? 'SET' : 'MISSING (pass --token)'}`);
+  console.log(`[fetcher] backend: ${backend} | token: ${token ? 'SET' : 'MISSING'}`);
   console.log(`[fetcher] ts: ${new Date().toISOString()}`);
 
-  // 1) fixtures
-  let fixtures = [];
-  let usedEndpoint = null;
-  for (const ep of ENDPOINTS) {
+  let allResults = [];
+  for (const ep of RESULT_ENDPOINTS) {
     const r = await fetchJson(ep.url);
     if (r.error) { console.log(`[fetcher] ${ep.name}: ${r.error}`); continue; }
-    const fs = normalizeFixtures(r.json);
-    if (dumpOnly) require('fs').writeFileSync(`dump-${ep.name}.json`, JSON.stringify(r.json, null, 1));
-    console.log(`[fetcher] ${ep.name}: ${fs.length} fixtures found`);
-    if (fs.length >= 3) { fixtures = fs.filter((f) => !f.finished); usedEndpoint = ep.name; break; }
-  }
-
-  // 2) results
-  let results = [];
-  for (const ep of RESULTS_ENDPOINTS) {
-    const r = await fetchJson(ep.url);
-    if (r.error) { console.log(`[fetcher] ${ep.name}: ${r.error}`); continue; }
+    if (dumpOnly) {
+      const fs = require('fs');
+      fs.writeFileSync(`dump-${ep.name}.json`, JSON.stringify(r.json, null, 1));
+    }
     const rs = normalizeResults(r.json);
-    console.log(`[fetcher] ${ep.name}: ${rs.length} results found`);
-    if (rs.length) { results = rs; break; }
+    console.log(`[fetcher] ${ep.name}: ${rs.length} finished matches found`);
+    for (const x of rs) allResults.push(x);
   }
 
   if (dumpOnly) {
-    console.log('[fetcher] dump done. Inspect dump-*.json and tell the dev which endpoint has fixtures.');
+    console.log('[fetcher] dump done — inspect dump-*.json and adjust RESULT_ENDPOINTS/normalizeResults if needed.');
     return;
   }
-  if (!fixtures.length) {
-    console.log('[fetcher] ⚠ no fixtures normalized. Run with --dump to inspect raw responses.');
+  if (!allResults.length) {
+    console.log('[fetcher] ⚠ no results normalized. Run --dump to see raw responses from your IP.');
     return;
   }
 
-  // 3) push to backend
-  const payload = { site: 'sportybet', token, fixtures, results, meta: { league: 'ENGLAND' } };
+  const payload = { site: 'sportybet', token, results: allResults };
   try {
     const res = await fetch(`${backend}/ingest`, {
       method: 'POST',
@@ -235,7 +145,7 @@ async function main() {
     });
     const body = await res.json().catch(() => ({}));
     console.log(`[fetcher] ingest: HTTP ${res.status} -> ${JSON.stringify(body)}`);
-    if (fixtures.length) console.log(`[fetcher] first fixture: ${fixtures[0].home} vs ${fixtures[0].away} odds=${JSON.stringify(fixtures[0].odds || {})}`);
+    console.log(`[fetcher] sample: ${JSON.stringify(allResults.slice(0, 3))}`);
   } catch (e) {
     console.log(`[fetcher] ingest failed: ${e.message}`);
   }

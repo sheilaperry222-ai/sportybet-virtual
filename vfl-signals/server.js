@@ -35,7 +35,7 @@ const MAX_RESULTS = 1000;
 const INGEST_TOKEN = process.env.INGEST_TOKEN || '';
 
 const SB_API = 'https://www.sportybet.com/api/ng/factsCenter/pcUpcomingEvents' +
-  '?sportId=sr%3Asport%3A202120001&marketId=1%2C18%2C10%2C29&pageSize=100&pageNum=1';
+  '?sportId=sr%3Asport%3A202120001&marketId=1%2C18%2C10%2C29&pageSize=100&pageNum=';
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
@@ -148,12 +148,25 @@ function buildPick(round) {
 }
 
 // ---------- poll loop (the whole backend) ---------------------------------------
+async function fetchEventsPage(pageNum) {
+  const res = await fetch(SB_API + pageNum, { headers: HEADERS, signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 async function pollSportyBet() {
   try {
-    const res = await fetch(SB_API, { headers: HEADERS, signal: AbortSignal.timeout(15000) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
-    const events = normalizeEvents(json);
+    // fetch the full England schedule (up to 5 pages of 100)
+    const events = [];
+    const seen = new Set();
+    for (let p = 1; p <= 5; p++) {
+      const json = await fetchEventsPage(p);
+      const pageEvents = normalizeEvents(json);
+      if (!pageEvents.length) break;
+      for (const e of pageEvents) {
+        if (!seen.has(e.eventId)) { seen.add(e.eventId); events.push(e); }
+      }
+    }
     if (!events.length) throw new Error('no England-league events in response');
 
     state.online = true;
@@ -172,6 +185,7 @@ async function pollSportyBet() {
         });
       }
     }
+    harvestScores(events);
     updatePhase();
   } catch (err) {
     state.online = false;
@@ -210,6 +224,27 @@ function mergeRealResult(site, entry) {
   if (exists) return;
   state.results.unshift(entry);
   if (state.results.length > MAX_RESULTS) state.results.length = MAX_RESULTS;
+}
+
+// Harvest REAL finished scores from the API when productStatus carries them
+// (e.g. "1#2" = home 1, away 2) or matchStatus leaves "Not start".
+function harvestScores(events) {
+  for (const e of events) {
+    const m = /^(\d+)#(\d+)$/.exec(String(e.productStatus || ''));
+    const finished = m && (parseInt(m[1], 10) + parseInt(m[2], 10)) > 0;
+    const hasScore = finished || /finish|ended|closed|full time/i.test(String(e.matchStatus || ''));
+    if (!hasScore) continue;
+    const t = state.tracked.get(e.eventId);
+    if (!t) continue;
+    const goals = finished ? [parseInt(m[1], 10) + parseInt(m[2], 10)] : [];
+    const entry = {
+      match: [t.teams],
+      time: `${fmtTime(t.start)} - week * ${isoWeek(t.start)}`,
+      result: goals.length ? goals : t.odds.map(() => 0),
+      odds: [t.odds.slice(0, 1), t.odds.slice(1, 2), t.odds.slice(2, 3), t.odds.slice(3, 4)],
+    };
+    mergeRealResult('sportybet', entry);
+  }
 }
 
 // ---------- web server ------------------------------------------------------------

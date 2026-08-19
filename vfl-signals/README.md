@@ -1,121 +1,76 @@
-# ⚡ VFL SIGNALS — RealNaps-style prediction broadcaster (no paywall, no login)
+# ⚡ VFL SIGNALS — REAL SportyBet Virtual England League predictions
 
-A working clone of the workflow observed on **realnaps.com** — but every
-visitor sees the predictions immediately. No premium tier, no login, no
-padlocks. Now with a **REAL SPORTYBET DATA MODE**.
+**Zero simulation.** Every pick, team name and odds value on this site comes
+straight from SportyBet's live API. If SportyBet can't be reached, the site
+shows OFFLINE — it never invents data.
 
-## Real SportyBet data — how it works
+## Live site
 
-SportyBet's virtual endpoints are geo-gated to their African markets, so the
-data pipeline has two hops:
+**https://vfl-signals.onrender.com** — complete app (frontend + socket),
+hosted on Render.
+
+## How the data flows
 
 ```
-Your PC in Nigeria (scripts/sportybet-fetcher.js)
-   │  fetches real virtual fixtures + odds from sportybet.com
-   │  POST /ingest (token-protected) every run
-   ▼
-Render backend (broadcasts LIVE picks; simulates only if feed goes stale)
-   ▼
-Netlify frontend (badge shows: LIVE SPORTYBET · N games · Xs ago  vs  SIMULATED)
+SportyBet factsCenter API (public, same API their web app uses)
+   GET /api/ng/factsCenter/pcUpcomingEvents
+       ?sportId=sr:sport:202120001   ← vFootball
+       &marketId=1,18,10,29          ← 1X2 + O/U ladder + Double Chance + GG/NG
+   └─ polled every 20s by server.js
+   └─ England league only (sv:category:202120001)
+   └─ each round = 10 real matches sharing one real kickoff time
+   └─ pick = top 3 by Over-1.5 implied probability (SportyBet's own odds)
+   └─ broadcast via Socket.IO (no login) → browser
 ```
 
-### Run the fetcher on your machine in Lagos
+Phase is driven by real kickoff times: `predicting` (countdown to kickoff,
+bets open) → `thinking` (round in play, bets closed) → next round.
+
+### Real results (history log)
+
+SportyBet's public API only exposes upcoming events; finished scores are not
+served by it. The result log therefore fills with REAL results when they are
+pushed to the backend:
 
 ```bash
-node scripts/sportybet-fetcher.js --backend https://vfl-signals.onrender.com --token <INGEST_TOKEN>
-# or first, discover which endpoint works on SportyBet's current build:
-node scripts/sportybet-fetcher.js --dump
+# from a machine in a SportyBet market (e.g. Lagos) — results tab scraping
+curl -X POST https://vfl-signals.onrender.com/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"site":"sportybet","token":"<INGEST_TOKEN>","results":[{"match":["ARS vs CHE"],"result":[3],"time":"08:52 - week * 34","odds":[["1.18"],["1.57"],["5.20"],["2.47"]]}]}'
 ```
 
-`INGEST_TOKEN` is set on the Render service (`INGEST_TOKEN.txt` in this
-folder). Run it on a loop (e.g. Windows Task Scheduler / cron every 30s),
-which also keeps the free Render service warm.
+Until then the history shows "No finished rounds recorded yet" — honestly
+empty, never fake.
 
-## How it maps to the real RealNaps backend
+## Events broadcast (Socket.IO, no auth)
 
-| RealNaps (observed) | This project |
+| Event | Payload |
 |---|---|
-| Node.js Socket.IO broadcaster on port 3000, no authentication | same — `server.js`, port 3000 |
-| Broadcasts every ~3 s | same |
-| `<site>-prediction` → `{betting_site, league:"ENGLAND", week, PID, predictions:[{Game, Team, allOdds:[O1.5,O2.5,U1.5,U2.5]}]}` | byte-compatible shape (`engine.js`) |
-| `<site>-result` → 1,000-entry log, newest first | same, capped at 1,000 |
-| "Thinking" gap while matches play, picks live before close | same state machine |
-| Client engine (`realnapsAI.js`) analytics | ported 1:1 into `public/app.js` |
-| Scraped virtual fixtures + odds | `scripts/sportybet-fetcher.js` → `/ingest` (real data) with simulated fallback |
-| `<site>-source` | extra event: `{source:"live"|"sim", fixtures, ageSec}` |
+| `sportybet-prediction` | `{betting_site, league:"ENGLAND", week, round, PID, kickoff, predictions:[{Game, Team:"ARS vs CHE", allOdds:[O1.5,O2.5,U1.5,U2.5]}]}` |
+| `sportybet-result` | real completed results (from /ingest), newest first |
+| `sportybet-phase` | `{phase:"predicting"|"thinking"|"offline", until, kickoff, ...}` |
+| `sportybet-source` | `{source:"live"|"offline", ageSec, fixtures, rounds, error}` |
 
 ## Run it locally
 
 ```bash
 npm install
-npm start            # http://localhost:3000
+npm start            # http://localhost:3000  (polls SportyBet every 20s)
 ```
 
-Config via env: `PORT`, `PREDICT_SECONDS` (default **25**), `THINK_SECONDS`
-(default **12**), `FEED_TTL_SECONDS` (default 120), `INGEST_TOKEN`.
+Env: `PORT`, `POLL_SECONDS` (default 20), `INGEST_TOKEN`.
 
-Verify the broadcast without a browser:
+## Hosting
 
-```bash
-node scripts/probe.js
-```
+- **Render**: whole app in one service (`render.yaml` blueprint). Netlify was
+  used for the frontend initially, but the account hit its deploy-credit
+  limit — the Render URL serves both frontend and backend.
+- **Netlify frontend** (optional): `npx netlify-cli deploy --dir=public --prod`
+  with `public/config.js` → `window.VFL_SOCKET_URL = "https://vfl-signals.onrender.com"`.
 
-## Hosting (Netlify frontend + websocket backend)
+## Honest note
 
-Netlify serves static files only — it **cannot** run the Socket.IO server
-(no long-lived websockets). So deploy in two parts:
-
-### 1) Backend (the live feed) — pick one host
-
-- **Render (recommended, free):** push this folder to GitHub, then on
-  render.com do *New → Blueprint* and select the repo — `render.yaml` is
-  already in this folder. You get `https://vfl-signals.onrender.com`.
-  *(Free tier sleeps after ~15 min of no traffic; first visitor wakes it.)*
-- **Glitch (free):** create a project, upload `server.js`, `engine.js`,
-  `package.json` + `public/`, then use the app URL.
-- **Your own VPS:** `npm install && npm start` behind any reverse proxy.
-
-### 2) Frontend on Netlify
-
-```bash
-# point the frontend at your backend URL
-# edit public/config.js:  window.VFL_SOCKET_URL = "https://vfl-signals.onrender.com"
-
-# then deploy
-npx netlify-cli deploy --dir=public --prod
-```
-
-> **Tip:** a zero-account alternative is **Netlify Drop** — drag the
-> `public/` folder onto https://app.netlify.com/drop in your browser.
-
-### Or skip the split entirely
-
-Render's blueprint also serves the frontend (the Node server hosts
-`public/`), so the whole site can live on the single Render URL.
-
-## Structure
-
-```
-server.js         HTTP + Socket.IO broadcaster (no auth)
-engine.js         fixture generation, pick selection, odds, round state machine
-public/index.html dashboard UI
-public/app.js     client engine (port of realnapsAI.js analytics logic)
-public/style.css  dark theme
-scripts/probe.js  smoke test for the socket
-```
-
-## Going live with real data
-
-Replace the simulated fixture source in `engine.js` → `buildRound()` with a
-real feed (the same way RealNaps scrapes the bookmaker's virtual schedule).
-Everything downstream (selection, odds, broadcast, log) stays the same.
-
-## Important honesty note
-
-Virtual football outcomes are produced by random number generators. The
-statistics in this demo mirror what RealNaps' own result log shows: hit rates
-that track the bookmaker odds minus margin — i.e. **no mathematical edge**,
-and Martingale only concentrates losses. If you run a public site like this:
-- keep the "no guaranteed winnings" disclaimer (included in the footer),
-- check local gambling-advertising rules in your target country,
-- respect bookmakers' terms of service before scraping anything.
+SportyBet's own implied probabilities are the selection criterion; the site
+is a real-data dashboard, not a guaranteed-profit system — virtual football
+outcomes are RNG, and no odds display can beat the bookmaker's margin over
+time. Bet responsibly. 18+.
